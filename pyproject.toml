@@ -1,0 +1,72 @@
+[project]
+name = "ai-assistant-fine-tuning"
+version = "0.1.0"
+description = "AI Assistant Fine-Tuning"
+readme = "README.md"
+requires-python = ">=3.10,<3.14"
+license = { text = "MIT" }
+authors = [
+    { name = "Your Name", email = "your.email@example.com" }
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+dependencies = [
+    # PyTorch
+    "torch",
+    "torchvision",
+    "torchaudio",
+    # ML/Training
+    "transformers>=4.57.0",
+    "datasets>=4.4.1",
+    "accelerate>=0.12.0",
+    "evaluate",
+    "sentencepiece!=0.1.92",
+    "protobuf",
+    "scikit-learn",
+    # Fine-tuning
+    "peft",
+    "trl>=0.12.0",
+    "bitsandbytes>=0.46.1",
+    "openai>=1.0",
+    # Serving
+    "vllm>=0.8.0",
+    # CLI
+    "click>=8.0",
+]
+
+[project.scripts]
+astft = "ai_assistant_fine_tuning.cli:cli"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "ruff>=0.1.0",
+]
+
+[tool.uv]
+extra-index-url = ["https://download.pytorch.org/whl/cu128"]
+index-strategy = "unsafe-best-match"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["ai_assistant_fine_tuning"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
