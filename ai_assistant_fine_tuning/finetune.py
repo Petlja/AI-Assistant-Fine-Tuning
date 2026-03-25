@@ -10,7 +10,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 from trl import SFTConfig, SFTTrainer
 
 DEFAULT_TRAINING_DATA = "training_data.jsonl"
-DEFAULT_BASE_MODEL = "meta-llama/Llama-3.1-8B-Instruct"
+DEFAULT_BASE_MODEL = "Qwen/Qwen3-14B"
 DEFAULT_OUTPUT_DIR = "./finetune-output"
 
 
@@ -38,9 +38,9 @@ DEFAULT_OUTPUT_DIR = "./finetune-output"
     help="Directory to save the fine-tuned adapter.",
 )
 @click.option("--epochs", default=3, show_default=True, help="Number of training epochs.")
-@click.option("--batch-size", default=4, show_default=True, help="Per-device batch size.")
-@click.option("--grad-accum", default=4, show_default=True, help="Gradient accumulation steps.")
-@click.option("--lr", default=2e-4, show_default=True, help="Learning rate.")
+@click.option("--batch-size", default=2, show_default=True, help="Per-device batch size.")
+@click.option("--grad-accum", default=8, show_default=True, help="Gradient accumulation steps.")
+@click.option("--lr", default=1e-4, show_default=True, help="Learning rate.")
 @click.option("--max-seq-len", default=2048, show_default=True, help="Maximum sequence length.")
 @click.option("--lora-r", default=16, show_default=True, help="LoRA rank.")
 @click.option("--lora-alpha", default=32, show_default=True, help="LoRA alpha.")

@@ -39,6 +39,7 @@ dependencies = [
     "vllm>=0.8.0",
     # CLI
     "click>=8.0",
+    "python-dotenv",
 ]
 
 [project.scripts]

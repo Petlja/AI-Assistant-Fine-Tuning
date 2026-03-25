@@ -10,33 +10,31 @@ from pathlib import Path
 
 import click
 from openai import OpenAI
+from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_INPUT_DIR = "../data-preprocessing/dataset/"
 DEFAULT_OUTPUT_FILE = "training_data.jsonl"
-DEFAULT_MODEL = "gpt-5.4"
+DEFAULT_MODEL = "gpt-5.4-mini"
 DEFAULT_SYSTEM_PROMPT = (
-    "You are a helpful teaching assistant. "
-    "Answer the student's question clearly, accurately, and concisely "
+    "You are a helpful AI assistant for teachers. "
+    "Help teachers prepare lessons clearly, accurately, and concisely "
     "based on the provided study material."
 )
 
 GENERATION_PROMPT = """\
 You are an expert educator. Given the following documentation/study material, \
 generate a list of high-quality instructional question-answer pairs that could \
-be used to fine-tune an AI teaching assistant.
+be used to fine-tune an AI assistant that helps teachers prepare lessons.
 
 Requirements:
 - Generate between 3 and 10 Q/A pairs depending on the length and richness of the material.
-- Questions should cover key concepts, definitions, explanations, and practical understanding.
-- Questions should be self-contained (a student should understand the question without seeing the source material).
+- Questions should cover key concepts, definitions, explanations, examples, and practical teaching use.
+- Questions should be self-contained and written from a teacher's perspective preparing a lesson.
 - Answers should be detailed, accurate, and based solely on the provided material.
-- Vary question types: factual recall, conceptual understanding, comparison, application.
+- Vary question types: lesson planning, conceptual explanation, comparison, classroom application.
 - Use the same language as the source material.
-
-Respond ONLY with a JSON array of objects, each with "question" and "answer" fields.
-Do not include any other text, markdown formatting, or code fences.
 
 --- MATERIAL ---
 {content}
@@ -44,64 +42,57 @@ Do not include any other text, markdown formatting, or code fences.
 """
 
 
-def find_markdown_files(input_dir: Path) -> list[Path]:
-    """Recursively find all *.md files in the given directory."""
-    files = sorted(input_dir.rglob("*.md"))
-    return files
+class QAPair(BaseModel):
+    question: str
+    answer: str
 
 
-def read_file_content(path: Path) -> str:
-    """Read a markdown file, returning its text content."""
-    return path.read_text(encoding="utf-8")
+class QAPairList(BaseModel):
+    pairs: list[QAPair]
 
 
 def generate_qa_pairs(
     client: OpenAI,
     content: str,
     model: str,
-) -> list[dict]:
+) -> QAPairList:
     """Call the teacher model to generate Q/A pairs from content."""
-    response = client.chat.completions.create(
+    response = client.beta.chat.completions.parse(
         model=model,
         messages=[
             {
                 "role": "system",
-                "content": "You generate training data. Respond only with valid JSON.",
+                "content": "You generate training data.",
             },
             {
                 "role": "user",
                 "content": GENERATION_PROMPT.format(content=content),
             },
         ],
+        response_format=QAPairList,
         temperature=0.7,
     )
-    raw = response.choices[0].message.content.strip()
-    # Strip markdown code fences if present
-    if raw.startswith("```"):
-        raw = raw.split("\n", 1)[1]
-        raw = raw.rsplit("```", 1)[0]
-    return json.loads(raw)
+    return response.choices[0].message.parsed
 
 
 def format_for_trl(
-    qa_pairs: list[dict],
+    qa_pairs: QAPairList,
     system_prompt: str,
 ) -> list[dict]:
     """Convert Q/A pairs to TRL SFT chat-format records.
 
     Each record: {"messages": [{"role": "system", ...}, {"role": "user", ...}, {"role": "assistant", ...}]}
     """
-    records = []
-    for pair in qa_pairs:
-        record = {
+    return [
+        {
             "messages": [
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": pair["question"]},
-                {"role": "assistant", "content": pair["answer"]},
+                {"role": "user", "content": pair.question},
+                {"role": "assistant", "content": pair.answer},
             ]
         }
-        records.append(record)
-    return records
+        for pair in qa_pairs.pairs
+    ]
 
 
 def write_jsonl(records: list[dict], output_path: Path, append: bool = True) -> None:
@@ -110,6 +101,19 @@ def write_jsonl(records: list[dict], output_path: Path, append: bool = True) -> 
     with open(output_path, mode, encoding="utf-8") as f:
         for record in records:
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+
+def write_readable(
+    qa_pairs: QAPairList, output_path: Path, source: str, append: bool = True,
+) -> None:
+    """Append Q/A pairs to a human-readable text file."""
+    mode = "a" if append else "w"
+    with open(output_path, mode, encoding="utf-8") as f:
+        f.write(f"=== Source: {source} ===\n\n")
+        for j, pair in enumerate(qa_pairs.pairs, 1):
+            f.write(f"Q{j}: {pair.question}\n")
+            f.write(f"A{j}: {pair.answer}\n\n")
+        f.write("\n")
 
 
 @click.command("gentd")
@@ -160,12 +164,7 @@ def gentd(
     OpenAI teacher model to produce Q/A pairs, and writes chat-format
     JSONL suitable for SFT training with TRL.
     """
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(message)s",
-    )
-
-    md_files = find_markdown_files(input_dir)
+    md_files = sorted(input_dir.rglob("*.md"))
     if not md_files:
         click.echo(f"No *.md files found in {input_dir}")
         raise SystemExit(1)
@@ -177,15 +176,17 @@ def gentd(
     client = OpenAI()
 
     total_pairs = 0
+    txt_output = output.with_suffix(".txt")
     if not append:
-        # Truncate output file
+        # Truncate output files
         output.write_text("", encoding="utf-8")
+        txt_output.write_text("", encoding="utf-8")
 
     for i, md_file in enumerate(md_files, 1):
         rel = md_file.relative_to(input_dir)
         click.echo(f"[{i}/{len(md_files)}] Processing {rel} ... ", nl=False)
 
-        content = read_file_content(md_file)
+        content = md_file.read_text(encoding="utf-8")
         if len(content.strip()) < 50:
             click.echo("skipped (too short)")
             continue
@@ -194,11 +195,9 @@ def gentd(
             qa_pairs = generate_qa_pairs(client, content, model)
             records = format_for_trl(qa_pairs, system_prompt)
             write_jsonl(records, output, append=True)
+            write_readable(qa_pairs, txt_output, source=str(rel), append=True)
             total_pairs += len(records)
             click.echo(f"{len(records)} pairs")
-        except (json.JSONDecodeError, KeyError) as exc:
-            click.echo(f"parse error: {exc}")
-            logger.warning("Failed to parse response for %s: %s", rel, exc)
         except Exception as exc:
             click.echo(f"error: {exc}")
             logger.warning("Failed to process %s: %s", rel, exc)

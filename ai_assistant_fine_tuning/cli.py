@@ -1,6 +1,9 @@
 """CLI for AI Assistant Fine-Tuning."""
 
+import logging
+
 import click
+from dotenv import load_dotenv
 
 from ai_assistant_fine_tuning.finetune import finetune
 from ai_assistant_fine_tuning.gentd import gentd
@@ -10,18 +13,15 @@ from ai_assistant_fine_tuning.gentd import gentd
 @click.version_option()
 def cli() -> None:
     """AI Assistant Fine-Tuning CLI."""
-    pass
+    load_dotenv()
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(message)s",
+    )
 
 
 cli.add_command(gentd)
 cli.add_command(finetune)
-
-
-@cli.command()
-@click.option("--name", default="World", help="Name to greet.")
-def hello(name: str) -> None:
-    """Say hello."""
-    click.echo(f"Hello, {name}!")
 
 
 if __name__ == "__main__":
