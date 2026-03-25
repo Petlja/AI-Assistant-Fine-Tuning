@@ -76,4 +76,5 @@ Thumbs.db
 # Project specific
 *.log
 finetune-output
+training_data.*
 
