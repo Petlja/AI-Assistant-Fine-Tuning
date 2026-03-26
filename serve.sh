@@ -11,4 +11,5 @@ exec uv run vllm serve "$BASE_MODEL" \
     --enable-lora \
     --lora-modules "${ADAPTER_NAME}=${ADAPTER_PATH}" \
     --max-lora-rank "$MAX_LORA_RANK" \
-    --port "$PORT"
+    --port "$PORT" \
+    --reasoning-parser qwen3
