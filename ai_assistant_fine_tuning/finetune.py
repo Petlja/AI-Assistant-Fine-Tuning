@@ -12,6 +12,26 @@ from trl import SFTConfig, SFTTrainer
 DEFAULT_TRAINING_DATA = "training_data.jsonl"
 DEFAULT_BASE_MODEL = "Qwen/Qwen3-14B"
 DEFAULT_OUTPUT_DIR = "./finetune-output"
+MIN_FREE_GPU_MEMORY_GIB_4BIT = 16.0
+
+
+def _bytes_to_gib(num_bytes: int) -> float:
+    return num_bytes / (1024 ** 3)
+
+
+def _ensure_gpu_has_headroom(use_4bit: bool) -> None:
+    free_bytes, total_bytes = torch.cuda.mem_get_info()
+    free_gib = _bytes_to_gib(free_bytes)
+    total_gib = _bytes_to_gib(total_bytes)
+
+    click.echo(f"GPU memory available: {free_gib:.2f} GiB free / {total_gib:.2f} GiB total")
+
+    if use_4bit and free_gib < MIN_FREE_GPU_MEMORY_GIB_4BIT:
+        raise click.ClickException(
+            "Not enough free GPU memory to load the 4-bit base model. "
+            f"Detected only {free_gib:.2f} GiB free on the active GPU. "
+            "Stop other GPU workloads such as vLLM, or retry with a smaller base model."
+        )
 
 
 @click.command("finetune")
@@ -70,6 +90,11 @@ def finetune(
     click.echo(f"Output dir: {output_dir}")
     click.echo(f"QLoRA 4-bit: {use_4bit}")
 
+    if not torch.cuda.is_available():
+        raise click.ClickException("Fine-tuning requires a CUDA GPU, but none was detected.")
+
+    _ensure_gpu_has_headroom(use_4bit)
+
     # Load dataset
     dataset = load_dataset("json", data_files=str(data), split="train")
     click.echo(f"Loaded {len(dataset)} training examples")
@@ -89,14 +114,29 @@ def finetune(
             bnb_4bit_use_double_quant=True,
         )
 
+    # This command targets a single GPU. For 4-bit loading, forcing the model
+    # onto that GPU avoids `device_map="auto"` spilling modules to CPU/disk,
+    # which transformers rejects for QLoRA.
+    device_map = {"": torch.cuda.current_device()} if use_4bit else "auto"
+
     # Load base model
-    base_model = AutoModelForCausalLM.from_pretrained(
-        model,
-        quantization_config=bnb_config,
-        device_map="auto",
-        dtype=torch.bfloat16,
-        attn_implementation="sdpa",
-    )
+    try:
+        base_model = AutoModelForCausalLM.from_pretrained(
+            model,
+            quantization_config=bnb_config,
+            device_map=device_map,
+            dtype=torch.bfloat16,
+            attn_implementation="sdpa",
+        )
+    except torch.OutOfMemoryError as exc:
+        free_bytes, total_bytes = torch.cuda.mem_get_info()
+        free_gib = _bytes_to_gib(free_bytes)
+        total_gib = _bytes_to_gib(total_bytes)
+        raise click.ClickException(
+            "CUDA ran out of memory while loading the base model. "
+            f"Current free memory: {free_gib:.2f} GiB / {total_gib:.2f} GiB. "
+            "Free the GPU first, or retry with a smaller model."
+        ) from exc
 
     # LoRA config
     peft_config = LoraConfig(
