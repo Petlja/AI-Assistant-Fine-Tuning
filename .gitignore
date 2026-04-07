@@ -78,3 +78,5 @@ Thumbs.db
 finetune-output
 training_data.*
 
+/dataset
+/test

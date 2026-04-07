@@ -4,13 +4,24 @@ Reads markdown documentation files and uses an OpenAI teacher model
 to produce prompt/chosen/rejected triples in JSONL for DPO training.
 """
 
+from pathlib import Path
+
 import json
 import logging
-from pathlib import Path
 
 import click
 from openai import OpenAI
 from pydantic import BaseModel
+
+from ai_assistant_fine_tuning.batching import (
+    MANIFEST_SCHEMA_VERSION,
+    create_chat_batch_request,
+    make_custom_id,
+    save_manifest,
+    short_sha1,
+    utc_now_iso,
+    write_jsonl as write_batch_jsonl,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -157,12 +168,33 @@ def write_readable(
     show_default=True,
     help="Append to existing output file instead of overwriting.",
 )
+@click.option(
+    "--batch/--no-batch",
+    default=False,
+    show_default=True,
+    help="Create OpenAI Batch API input + manifest instead of calling the model directly.",
+)
+@click.option(
+    "--batch-input",
+    type=click.Path(dir_okay=False, path_type=Path),
+    default=None,
+    help="Optional path for generated Batch API input JSONL.",
+)
+@click.option(
+    "--manifest",
+    type=click.Path(dir_okay=False, path_type=Path),
+    default=None,
+    help="Optional path for generated batch manifest JSON.",
+)
 def gendpo(
     input_dir: Path,
     output: Path,
     model: str,
     system_prompt: str,
     append: bool,
+    batch: bool,
+    batch_input: Path | None,
+    manifest: Path | None,
 ) -> None:
     """Generate DPO preference data from documentation using a teacher model.
 
@@ -178,6 +210,85 @@ def gendpo(
     click.echo(f"Found {len(md_files)} markdown file(s) in {input_dir}")
     click.echo(f"Teacher model: {model}")
     click.echo(f"Output: {output}")
+
+    if batch:
+        batch_input_path = batch_input or output.with_suffix(".batch.input.jsonl")
+        manifest_path = manifest or output.with_suffix(".batch.manifest.json")
+
+        batch_input_path.parent.mkdir(parents=True, exist_ok=True)
+        manifest_path.parent.mkdir(parents=True, exist_ok=True)
+
+        batch_records: list[dict] = []
+        manifest_requests: list[dict] = []
+
+        for md_file in md_files:
+            rel = md_file.relative_to(input_dir)
+            content = md_file.read_text(encoding="utf-8")
+            if len(content.strip()) < 50:
+                continue
+
+            custom_id = make_custom_id("gendpo", rel, content)
+            messages = [
+                {
+                    "role": "system",
+                    "content": (
+                        "You generate preference training data. "
+                        "Return ONLY a valid JSON object with a 'pairs' key."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": GENERATION_PROMPT.format(content=content),
+                },
+            ]
+            batch_records.append(
+                create_chat_batch_request(
+                    custom_id=custom_id,
+                    model=model,
+                    messages=messages,
+                    temperature=0.7,
+                )
+            )
+            manifest_requests.append(
+                {
+                    "custom_id": custom_id,
+                    "source_rel_path": rel.as_posix(),
+                    "content_sha1": short_sha1(content, length=40),
+                    "status": "pending",
+                }
+            )
+
+        if not batch_records:
+            raise click.ClickException("No eligible markdown content found for batch input.")
+
+        write_batch_jsonl(batch_records, batch_input_path, append=False)
+        save_manifest(
+            {
+                "schema_version": MANIFEST_SCHEMA_VERSION,
+                "task": "gendpo",
+                "model": model,
+                "input_dir": str(input_dir),
+                "system_prompt": system_prompt,
+                "batch_input_file": str(batch_input_path),
+                "final_output_file": str(output),
+                "final_readable_file": str(output.with_suffix(".txt")),
+                "created_at": utc_now_iso(),
+                "batch": {
+                    "id": None,
+                    "status": "not_submitted",
+                    "input_file_id": None,
+                    "output_file_id": None,
+                    "error_file_id": None,
+                },
+                "requests": manifest_requests,
+            },
+            manifest_path,
+        )
+
+        click.echo(f"Batch input written: {batch_input_path}")
+        click.echo(f"Manifest written: {manifest_path}")
+        click.echo("Next: run 'astft batch-submit --manifest <manifest_path>'")
+        return
 
     client = OpenAI()
 
