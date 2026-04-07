@@ -5,7 +5,9 @@ import logging
 import click
 from dotenv import load_dotenv
 
+from ai_assistant_fine_tuning.dpo import dpo
 from ai_assistant_fine_tuning.finetune import finetune
+from ai_assistant_fine_tuning.gendpo import gendpo
 from ai_assistant_fine_tuning.gentd import gentd
 
 
@@ -21,7 +23,9 @@ def cli() -> None:
 
 
 cli.add_command(gentd)
+cli.add_command(gendpo)
 cli.add_command(finetune)
+cli.add_command(dpo)
 
 
 if __name__ == "__main__":
