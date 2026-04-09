@@ -1,23 +1,30 @@
-"""Batch lifecycle commands for OpenAI Batch API."""
+"""Batch commands: submit and fetch for OpenAI Batch API."""
 
 from __future__ import annotations
 
-# Setup path for direct script execution (before any relative imports)
-import sys
-from pathlib import Path
-
 import json
+import logging
+from pathlib import Path
 from typing import Any
 
 import click
 from openai import OpenAI
 
-from ai_assistant_fine_tuning.batching import (
+from ai_assistant_fine_tuning.batch_util import (
     load_manifest,
     save_manifest,
+    update_manifest_batch_state,
     utc_now_iso,
     write_jsonl,
 )
+from ai_assistant_fine_tuning.data_gen import (
+    transform_dpo_batch,
+    transform_sft_batch,
+    write_readable_dpo_raw,
+    write_readable_sft_raw,
+)
+
+logger = logging.getLogger(__name__)
 
 TERMINAL_BATCH_STATES = {"completed", "failed", "expired", "cancelled"}
 
@@ -42,28 +49,6 @@ def _safe_text_from_file_content(file_content: Any) -> str:
     return str(file_content)
 
 
-def _update_manifest_batch_state(manifest: dict[str, Any], batch_obj: Any) -> None:
-    batch_state = manifest.setdefault("batch", {})
-    batch_state.update(
-        {
-            "id": batch_obj.id,
-            "status": batch_obj.status,
-            "input_file_id": batch_obj.input_file_id,
-            "output_file_id": getattr(batch_obj, "output_file_id", None),
-            "error_file_id": getattr(batch_obj, "error_file_id", None),
-            "updated_at": utc_now_iso(),
-        }
-    )
-
-    request_counts = getattr(batch_obj, "request_counts", None)
-    if request_counts:
-        batch_state["request_counts"] = {
-            "total": request_counts.total,
-            "completed": request_counts.completed,
-            "failed": request_counts.failed,
-        }
-
-
 def _parse_chat_completion_content(line: dict[str, Any]) -> str:
     response = line.get("response") or {}
     body = response.get("body") or {}
@@ -81,94 +66,6 @@ def _parse_chat_completion_content(line: dict[str, Any]) -> str:
         raise ValueError("Missing assistant message content")
 
     return content
-
-
-def _transform_gentd(json_obj: dict[str, Any], system_prompt: str) -> tuple[list[dict[str, Any]], list[tuple[str, str]]]:
-    pairs = json_obj.get("pairs")
-    if not isinstance(pairs, list):
-        raise ValueError("gentd output missing 'pairs' list")
-
-    records: list[dict[str, Any]] = []
-    readable: list[tuple[str, str]] = []
-    for item in pairs:
-        if not isinstance(item, dict):
-            continue
-        question = item.get("question")
-        answer = item.get("answer")
-        if not isinstance(question, str) or not isinstance(answer, str):
-            continue
-
-        records.append(
-            {
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": question},
-                    {"role": "assistant", "content": answer},
-                ]
-            }
-        )
-        readable.append((question, answer))
-
-    if not records:
-        raise ValueError("gentd output had no valid question-answer pairs")
-
-    return records, readable
-
-
-def _transform_gendpo(json_obj: dict[str, Any], system_prompt: str) -> tuple[list[dict[str, Any]], list[tuple[str, str, str]]]:
-    pairs = json_obj.get("pairs")
-    if not isinstance(pairs, list):
-        raise ValueError("gendpo output missing 'pairs' list")
-
-    records: list[dict[str, Any]] = []
-    readable: list[tuple[str, str, str]] = []
-    for item in pairs:
-        if not isinstance(item, dict):
-            continue
-        prompt = item.get("prompt")
-        chosen = item.get("chosen")
-        rejected = item.get("rejected")
-        if not isinstance(prompt, str) or not isinstance(chosen, str) or not isinstance(rejected, str):
-            continue
-
-        records.append(
-            {
-                "prompt": f"{system_prompt}\n\n{prompt}" if system_prompt else prompt,
-                "chosen": chosen,
-                "rejected": rejected,
-            }
-        )
-        readable.append((prompt, chosen, rejected))
-
-    if not records:
-        raise ValueError("gendpo output had no valid preference pairs")
-
-    return records, readable
-
-
-def _write_readable_gentd(items: list[dict[str, Any]], output_path: Path, append: bool) -> None:
-    mode = "a" if append else "w"
-    with open(output_path, mode, encoding="utf-8") as f:
-        for item in items:
-            source = item["source"]
-            f.write(f"=== Source: {source} ===\n\n")
-            for i, (question, answer) in enumerate(item["pairs"], 1):
-                f.write(f"Q{i}: {question}\n")
-                f.write(f"A{i}: {answer}\n\n")
-            f.write("\n")
-
-
-def _write_readable_gendpo(items: list[dict[str, Any]], output_path: Path, append: bool) -> None:
-    mode = "a" if append else "w"
-    with open(output_path, mode, encoding="utf-8") as f:
-        for item in items:
-            source = item["source"]
-            f.write(f"=== Source: {source} ===\n\n")
-            for i, (prompt, chosen, rejected) in enumerate(item["pairs"], 1):
-                f.write(f"Prompt {i}: {prompt}\n")
-                f.write(f"Chosen {i}: {chosen}\n")
-                f.write(f"Rejected {i}: {rejected}\n\n")
-            f.write("\n")
 
 
 @click.command("batch-submit")
@@ -206,7 +103,7 @@ def batch_submit(manifest: Path, batch_input: Path | None) -> None:
     )
 
     manifest_obj.setdefault("batch", {})
-    _update_manifest_batch_state(manifest_obj, batch_obj)
+    update_manifest_batch_state(manifest_obj, batch_obj)
     manifest_obj["batch"]["submitted_at"] = utc_now_iso()
     manifest_obj["batch"]["input_file_id"] = uploaded_file.id
 
@@ -216,38 +113,7 @@ def batch_submit(manifest: Path, batch_input: Path | None) -> None:
     click.echo(f"Status: {batch_obj.status}")
 
 
-@click.command("batch-status")
-@click.option(
-    "--manifest",
-    type=click.Path(exists=True, dir_okay=False, path_type=Path),
-    required=True,
-    help="Path to manifest JSON.",
-)
-def batch_status(manifest: Path) -> None:
-    """Check status of an OpenAI batch and refresh manifest state."""
-    manifest_obj = load_manifest(manifest)
-    batch_id = manifest_obj.get("batch", {}).get("id")
-    if not batch_id:
-        raise click.ClickException("Manifest does not contain a batch id. Run batch-submit first.")
-
-    client = OpenAI()
-    batch_obj = client.batches.retrieve(batch_id)
-    _update_manifest_batch_state(manifest_obj, batch_obj)
-    save_manifest(manifest_obj, manifest)
-
-    counts = manifest_obj.get("batch", {}).get("request_counts") or {}
-    click.echo(f"Batch: {batch_id}")
-    click.echo(f"Status: {batch_obj.status}")
-    if counts:
-        click.echo(
-            "Requests: "
-            f"total={counts.get('total', 0)} "
-            f"completed={counts.get('completed', 0)} "
-            f"failed={counts.get('failed', 0)}"
-        )
-
-
-@click.command("batch-fetch")
+@click.command("fetch-batch")
 @click.option(
     "--manifest",
     type=click.Path(exists=True, dir_okay=False, path_type=Path),
@@ -273,17 +139,22 @@ def batch_status(manifest: Path) -> None:
     show_default=True,
     help="Append to existing output files instead of overwriting.",
 )
-def batch_fetch(
+def fetch_batch(
     manifest: Path,
     output_path: Path | None,
     readable_output: Path | None,
     append: bool,
 ) -> None:
-    """Fetch completed batch outputs and transform into training data JSONL."""
+    """Check batch status and fetch results if complete.
+
+    If the batch is still running, prints current status and exits.
+    If the batch is in a terminal state, downloads outputs, transforms
+    them into training data, and writes JSONL + readable files.
+    """
     manifest_obj = load_manifest(manifest)
     task = manifest_obj.get("task")
-    if task not in {"gentd", "gendpo"}:
-        raise click.ClickException("Manifest task must be either 'gentd' or 'gendpo'.")
+    if task not in {"sft", "dpo"}:
+        raise click.ClickException("Manifest task must be either 'sft' or 'dpo'.")
 
     batch_id = manifest_obj.get("batch", {}).get("id")
     if not batch_id:
@@ -291,18 +162,29 @@ def batch_fetch(
 
     client = OpenAI()
     batch_obj = client.batches.retrieve(batch_id)
-    _update_manifest_batch_state(manifest_obj, batch_obj)
+    update_manifest_batch_state(manifest_obj, batch_obj)
 
+    # If not terminal, report status and exit.
     if batch_obj.status not in TERMINAL_BATCH_STATES:
         save_manifest(manifest_obj, manifest)
-        raise click.ClickException(
-            f"Batch is not terminal yet (status={batch_obj.status}). Run batch-status and retry later."
-        )
+        counts = manifest_obj.get("batch", {}).get("request_counts") or {}
+        click.echo(f"Batch: {batch_id}")
+        click.echo(f"Status: {batch_obj.status}")
+        if counts:
+            click.echo(
+                "Requests: "
+                f"total={counts.get('total', 0)} "
+                f"completed={counts.get('completed', 0)} "
+                f"failed={counts.get('failed', 0)}"
+            )
+        click.echo("Batch is not complete yet. Re-run this command later.")
+        return
 
+    # Terminal state — attempt to fetch results.
     output_file_id = getattr(batch_obj, "output_file_id", None)
     if not output_file_id:
         save_manifest(manifest_obj, manifest)
-        raise click.ClickException("Batch has no output file yet.")
+        raise click.ClickException("Batch has no output file.")
 
     output_text = _safe_text_from_file_content(client.files.content(output_file_id))
     output_lines: list[dict[str, Any]] = []
@@ -316,8 +198,8 @@ def batch_fetch(
 
     system_prompt = manifest_obj.get("system_prompt", "")
     final_records: list[dict[str, Any]] = []
-    gentd_readable_items: list[dict[str, Any]] = []
-    gendpo_readable_items: list[dict[str, Any]] = []
+    sft_readable_items: list[dict[str, Any]] = []
+    dpo_readable_items: list[dict[str, Any]] = []
 
     for line in output_lines:
         custom_id = line.get("custom_id")
@@ -340,17 +222,17 @@ def batch_fetch(
             content = _parse_chat_completion_content(line)
             parsed_json = json.loads(content)
 
-            if task == "gentd":
-                records, readable_pairs = _transform_gentd(parsed_json, system_prompt)
-                gentd_readable_items.append(
+            if task == "sft":
+                records, readable_pairs = transform_sft_batch(parsed_json, system_prompt)
+                sft_readable_items.append(
                     {
                         "source": manifest_req.get("source_rel_path", custom_id),
                         "pairs": readable_pairs,
                     }
                 )
             else:
-                records, readable_pairs = _transform_gendpo(parsed_json, system_prompt)
-                gendpo_readable_items.append(
+                records, readable_pairs = transform_dpo_batch(parsed_json, system_prompt)
+                dpo_readable_items.append(
                     {
                         "source": manifest_req.get("source_rel_path", custom_id),
                         "pairs": readable_pairs,
@@ -363,6 +245,7 @@ def batch_fetch(
         except Exception:
             manifest_req["status"] = "failed_parse"
 
+    # Process error file if present.
     error_file_id = getattr(batch_obj, "error_file_id", None)
     if error_file_id:
         error_text = _safe_text_from_file_content(client.files.content(error_file_id))
@@ -376,22 +259,25 @@ def batch_fetch(
             if req is not None and req.get("status") != "succeeded":
                 req["status"] = "failed_api"
 
+    # Mark unresolved requests.
     unresolved = 0
     for req in requests:
         if req.get("status") not in {"succeeded", "failed_api", "failed_parse", "skipped_too_short"}:
             req["status"] = "missing_output"
             unresolved += 1
 
+    # Write outputs.
     final_output_path = output_path or Path(manifest_obj["final_output_file"])
     final_readable_path = readable_output or Path(manifest_obj["final_readable_file"])
 
     if final_records:
         write_jsonl(final_records, final_output_path, append=append)
-        if task == "gentd":
-            _write_readable_gentd(gentd_readable_items, final_readable_path, append=append)
+        if task == "sft":
+            write_readable_sft_raw(sft_readable_items, final_readable_path, append=append)
         else:
-            _write_readable_gendpo(gendpo_readable_items, final_readable_path, append=append)
+            write_readable_dpo_raw(dpo_readable_items, final_readable_path, append=append)
 
+    # Update manifest summary.
     manifest_obj["fetched_at"] = utc_now_iso()
     manifest_obj["summary"] = {
         "succeeded_requests": sum(1 for req in requests if req.get("status") == "succeeded"),
@@ -405,14 +291,3 @@ def batch_fetch(
     click.echo(f"Fetched {len(output_lines)} batch output line(s)")
     click.echo(f"Generated {len(final_records)} training record(s) -> {final_output_path}")
     click.echo(f"Manifest updated -> {manifest}")
-
-
-@click.group()
-def batch_cli() -> None:
-    """Batch API lifecycle commands."""
-    pass
-
-
-batch_cli.add_command(batch_submit)
-batch_cli.add_command(batch_status)
-batch_cli.add_command(batch_fetch)

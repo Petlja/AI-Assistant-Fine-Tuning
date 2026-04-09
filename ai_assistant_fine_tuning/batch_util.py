@@ -64,6 +64,29 @@ def load_manifest(manifest_path: Path) -> dict[str, Any]:
     return json.loads(manifest_path.read_text(encoding="utf-8"))
 
 
+def update_manifest_batch_state(manifest: dict[str, Any], batch_obj: Any) -> None:
+    """Update manifest with current batch object state."""
+    batch_state = manifest.setdefault("batch", {})
+    batch_state.update(
+        {
+            "id": batch_obj.id,
+            "status": batch_obj.status,
+            "input_file_id": batch_obj.input_file_id,
+            "output_file_id": getattr(batch_obj, "output_file_id", None),
+            "error_file_id": getattr(batch_obj, "error_file_id", None),
+            "updated_at": utc_now_iso(),
+        }
+    )
+
+    request_counts = getattr(batch_obj, "request_counts", None)
+    if request_counts:
+        batch_state["request_counts"] = {
+            "total": request_counts.total,
+            "completed": request_counts.completed,
+            "failed": request_counts.failed,
+        }
+
+
 def create_chat_batch_request(
     *,
     custom_id: str,

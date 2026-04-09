@@ -20,12 +20,12 @@ astft --version
 
 ## Commands
 
-### 1) gentd
+### 1) gen-sft-td
 
-Generate chat-format SFT JSONL (`messages: system/user/assistant`) from markdown files.
+Generate chat-format SFT JSONL (`messages: system/user/assistant`) from markdown files using a teacher model synchronously.
 
 ```bash
-astft gentd --help
+astft gen-sft-td --help
 ```
 
 Options:
@@ -35,52 +35,63 @@ Options:
 - `--model, -m TEXT` (default: `gpt-5.4-mini`)
 - `--system-prompt TEXT`
 - `--append / --overwrite` (default: overwrite)
-- `--batch / --no-batch` (default: no-batch)
-- `--batch-input FILE` (optional batch input JSONL path)
-- `--manifest FILE` (optional batch manifest path)
 
-Examples:
+Example:
 
 ```bash
-# Synchronous generation
-astft gentd --input-dir ./dataset/os5_inf_prog --output training_data.jsonl --model gpt-4o-mini --no-batch
-
-# Batch artifact generation only (no immediate model calls)
-astft gentd --input-dir ./dataset/os5_inf_prog --output training_data.jsonl --model gpt-4o-mini --batch
+astft gen-sft-td --input-dir ./dataset/os5_inf_prog --output training_data.jsonl --model gpt-4o-mini
 ```
 
-### 2) gendpo
+### 2) gen-dpo-td
 
-Generate DPO JSONL (`prompt/chosen/rejected`) from markdown files.
+Generate DPO JSONL (`prompt/chosen/rejected`) from markdown files using a teacher model synchronously.
 
 ```bash
-astft gendpo --help
+astft gen-dpo-td --help
 ```
 
 Options:
 
-- `--input-dir DIRECTORY`
+- `--input-dir DIRECTORY` (default: `../data-preprocessing/dataset/`)
 - `--output, -o FILE` (default: `training_data_dpo.jsonl`)
 - `--model, -m TEXT` (default: `gpt-5.4-mini`)
 - `--system-prompt TEXT`
 - `--append / --overwrite` (default: overwrite)
-- `--batch / --no-batch` (default: no-batch)
-- `--batch-input FILE`
-- `--manifest FILE`
 
-Examples:
+Example:
 
 ```bash
-# Synchronous generation
-astft gendpo --input-dir ./dataset/os5_inf_prog --output training_data_dpo.jsonl --model gpt-4o-mini --no-batch
-
-# Batch artifact generation
-astft gendpo --input-dir ./dataset/os5_inf_prog --output training_data_dpo.jsonl --model gpt-4o-mini --batch
+astft gen-dpo-td --input-dir ./dataset/os5_inf_prog --output training_data_dpo.jsonl --model gpt-4o-mini
 ```
 
-### 3) batch-submit
+### 3) gen-batch
 
-Submit a prepared batch input file (from `gentd --batch` or `gendpo --batch`) to OpenAI Batch API.
+Prepare OpenAI Batch API input and manifest for asynchronous SFT or DPO training data generation.
+
+```bash
+astft gen-batch --help
+```
+
+Options:
+
+- `--task [sft|dpo]` (required)
+- `--input-dir DIRECTORY` (default: `../data-preprocessing/dataset/`)
+- `--output, -o FILE` (default depends on task)
+- `--model, -m TEXT` (default: `gpt-5.4-mini`)
+- `--system-prompt TEXT`
+- `--batch-input FILE` (optional batch input JSONL path)
+- `--manifest FILE` (optional batch manifest path)
+
+Example:
+
+```bash
+astft gen-batch --task sft --input-dir ./dataset/os5_inf_prog --output training_data.jsonl --model gpt-4o-mini
+astft gen-batch --task dpo --input-dir ./dataset/os5_inf_prog --output training_data_dpo.jsonl --model gpt-4o-mini
+```
+
+### 4) batch-submit
+
+Submit a prepared batch input file (from `gen-batch`) to OpenAI Batch API.
 
 ```bash
 astft batch-submit --help
@@ -97,30 +108,12 @@ Example:
 astft batch-submit --manifest training_data.batch.manifest.json
 ```
 
-### 4) batch-status
+### 5) fetch-batch
 
-Check current batch status and refresh manifest state.
-
-```bash
-astft batch-status --help
-```
-
-Options:
-
-- `--manifest FILE` (required)
-
-Example:
+Check batch status and fetch results if complete. If the batch is still running, prints current status and exits. If complete, downloads outputs and transforms them into training data JSONL.
 
 ```bash
-astft batch-status --manifest training_data.batch.manifest.json
-```
-
-### 5) batch-fetch
-
-Fetch completed batch output and transform into final training JSONL format.
-
-```bash
-astft batch-fetch --help
+astft fetch-batch --help
 ```
 
 Options:
@@ -133,15 +126,15 @@ Options:
 Example:
 
 ```bash
-astft batch-fetch --manifest training_data.batch.manifest.json --overwrite
+astft fetch-batch --manifest training_data.batch.manifest.json --overwrite
 ```
 
-### 6) finetune
+### 6) sft-finetune
 
 Run LoRA/QLoRA SFT fine-tuning on a CUDA GPU.
 
 ```bash
-astft finetune --help
+astft sft-finetune --help
 ```
 
 Key options:
@@ -162,15 +155,15 @@ Key options:
 Example:
 
 ```bash
-astft finetune --data training_data.jsonl --model Qwen/Qwen3-14B --output-dir ./finetune-output
+astft sft-finetune --data training_data.jsonl --model Qwen/Qwen3-14B --output-dir ./finetune-output
 ```
 
-### 7) dpo
+### 7) dpo-finetune
 
 Run DPO alignment from an existing SFT adapter.
 
 ```bash
-astft dpo --help
+astft dpo-finetune --help
 ```
 
 Required options:
@@ -193,7 +186,7 @@ Other options:
 Example:
 
 ```bash
-astft dpo --adapter ./finetune-output --training-data training_data_dpo.jsonl --output-dir ./dpo-output
+astft dpo-finetune --adapter ./finetune-output --training-data training_data_dpo.jsonl --output-dir ./dpo-output
 ```
 
 ## Typical Pipelines
@@ -201,35 +194,31 @@ astft dpo --adapter ./finetune-output --training-data training_data_dpo.jsonl --
 ### Pipeline A: Synchronous generation
 
 ```bash
-astft gentd --input-dir ./dataset/os5_inf_prog --output training_data.jsonl --model gpt-4o-mini --no-batch
-astft gendpo --input-dir ./dataset/os5_inf_prog --output training_data_dpo.jsonl --model gpt-4o-mini --no-batch
+astft gen-sft-td --input-dir ./dataset/os5_inf_prog --output training_data.jsonl --model gpt-4o-mini
+astft gen-dpo-td --input-dir ./dataset/os5_inf_prog --output training_data_dpo.jsonl --model gpt-4o-mini
 ```
 
 ### Pipeline B: Batch generation
 
 ```bash
 # Create batch inputs + manifests
-astft gentd --input-dir ./dataset/os5_inf_prog --output training_data.jsonl --model gpt-4o-mini --batch
-astft gendpo --input-dir ./dataset/os5_inf_prog --output training_data_dpo.jsonl --model gpt-4o-mini --batch
+astft gen-batch --task sft --input-dir ./dataset/os5_inf_prog --output training_data.jsonl --model gpt-4o-mini
+astft gen-batch --task dpo --input-dir ./dataset/os5_inf_prog --output training_data_dpo.jsonl --model gpt-4o-mini
 
 # Submit
 astft batch-submit --manifest training_data.batch.manifest.json
 astft batch-submit --manifest training_data_dpo.batch.manifest.json
 
-# Poll status
-astft batch-status --manifest training_data.batch.manifest.json
-astft batch-status --manifest training_data_dpo.batch.manifest.json
-
-# Fetch final outputs when completed
-astft batch-fetch --manifest training_data.batch.manifest.json --overwrite
-astft batch-fetch --manifest training_data_dpo.batch.manifest.json --overwrite
+# Check status & fetch results when complete
+astft fetch-batch --manifest training_data.batch.manifest.json --overwrite
+astft fetch-batch --manifest training_data_dpo.batch.manifest.json --overwrite
 ```
 
 ### Pipeline C: Train and align
 
 ```bash
-astft finetune --data training_data.jsonl --output-dir ./finetune-output
-astft dpo --adapter ./finetune-output --training-data training_data_dpo.jsonl --output-dir ./dpo-output
+astft sft-finetune --data training_data.jsonl --output-dir ./finetune-output
+astft dpo-finetune --adapter ./finetune-output --training-data training_data_dpo.jsonl --output-dir ./dpo-output
 ```
 
 ## Serving
