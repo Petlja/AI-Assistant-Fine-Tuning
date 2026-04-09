@@ -86,7 +86,7 @@ def _resolve_base_model_name(adapter: Path, model_override: str | None) -> str:
 @click.option("--lr", default=5e-6, show_default=True, help="Learning rate.")
 @click.option("--max-seq-len", default=2048, show_default=True, help="Maximum sequence length.")
 @click.option("--beta", default=0.1, show_default=True, help="DPO beta parameter.")
-@click.option("--use-4bit/--no-4bit", default=True, show_default=True, help="Use 4-bit quantization (QLoRA).")
+@click.option("--use-4bit/--no-4bit", default=False, show_default=True, help="Use 4-bit quantization (QLoRA).")
 def dpo_finetune(
     adapter: Path,
     training_data: Path,
