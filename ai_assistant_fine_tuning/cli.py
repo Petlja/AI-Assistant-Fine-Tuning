@@ -6,10 +6,10 @@ import click
 from dotenv import load_dotenv
 
 from ai_assistant_fine_tuning.batch_commands import batch_fetch, batch_status, batch_submit
-from ai_assistant_fine_tuning.dpo import dpo
-from ai_assistant_fine_tuning.finetune import finetune
-from ai_assistant_fine_tuning.gendpo import gendpo
-from ai_assistant_fine_tuning.gentd import gentd
+from ai_assistant_fine_tuning.dpo_finetune import dpo_finetune
+from ai_assistant_fine_tuning.sft_finetune import sft_finetune
+from ai_assistant_fine_tuning.gen_dpo_td import gen_dpo_td
+from ai_assistant_fine_tuning.gen_sft_td import gen_sft_td
 
 
 @click.group()
@@ -23,13 +23,13 @@ def cli() -> None:
     )
 
 
-cli.add_command(gentd)
-cli.add_command(gendpo)
+cli.add_command(gen_sft_td)
+cli.add_command(gen_dpo_td)
 cli.add_command(batch_submit)
 cli.add_command(batch_status)
 cli.add_command(batch_fetch)
-cli.add_command(finetune)
-cli.add_command(dpo)
+cli.add_command(sft_finetune)
+cli.add_command(dpo_finetune)
 
 
 if __name__ == "__main__":

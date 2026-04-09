@@ -127,7 +127,7 @@ def write_readable(
         f.write("\n")
 
 
-@click.command("gentd")
+@click.command("gen-sft-td")
 @click.option(
     "--input-dir",
     type=click.Path(exists=True, file_okay=False, path_type=Path),
@@ -180,7 +180,7 @@ def write_readable(
     default=None,
     help="Optional path for generated batch manifest JSON.",
 )
-def gentd(
+def gen_sft_td(
     input_dir: Path,
     output: Path,
     model: str,

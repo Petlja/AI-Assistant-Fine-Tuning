@@ -34,7 +34,7 @@ def _ensure_gpu_has_headroom(use_4bit: bool) -> None:
         )
 
 
-@click.command("finetune")
+@click.command("sft-finetune")
 @click.option(
     "--data",
     type=click.Path(exists=True, dir_okay=False, path_type=Path),
@@ -66,7 +66,7 @@ def _ensure_gpu_has_headroom(use_4bit: bool) -> None:
 @click.option("--lora-alpha", default=32, show_default=True, help="LoRA alpha.")
 @click.option("--lora-dropout", default=0.05, show_default=True, help="LoRA dropout.")
 @click.option("--use-4bit/--no-4bit", default=True, show_default=True, help="Use 4-bit quantization (QLoRA).")
-def finetune(
+def sft_finetune(
     data: Path,
     model: str,
     output_dir: Path,

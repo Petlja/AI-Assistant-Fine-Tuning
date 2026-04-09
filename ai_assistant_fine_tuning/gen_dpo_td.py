@@ -133,7 +133,7 @@ def write_readable(
         f.write("\n")
 
 
-@click.command("gendpo")
+@click.command("gen-dpo-td")
 @click.option(
     "--input-dir",
     type=click.Path(exists=True, file_okay=False, path_type=Path),
@@ -186,7 +186,7 @@ def write_readable(
     default=None,
     help="Optional path for generated batch manifest JSON.",
 )
-def gendpo(
+def gen_dpo_td(
     input_dir: Path,
     output: Path,
     model: str,

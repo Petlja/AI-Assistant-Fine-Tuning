@@ -54,7 +54,7 @@ def _resolve_base_model_name(adapter: Path, model_override: str | None) -> str:
     return base_model_name
 
 
-@click.command("dpo")
+@click.command("dpo-finetune")
 @click.option(
     "--adapter",
     type=click.Path(exists=True, file_okay=False, dir_okay=True, path_type=Path),
@@ -87,7 +87,7 @@ def _resolve_base_model_name(adapter: Path, model_override: str | None) -> str:
 @click.option("--max-seq-len", default=2048, show_default=True, help="Maximum sequence length.")
 @click.option("--beta", default=0.1, show_default=True, help="DPO beta parameter.")
 @click.option("--use-4bit/--no-4bit", default=True, show_default=True, help="Use 4-bit quantization (QLoRA).")
-def dpo(
+def dpo_finetune(
     adapter: Path,
     training_data: Path,
     model: str | None,

@@ -5,9 +5,6 @@ from __future__ import annotations
 # Setup path for direct script execution (before any relative imports)
 import sys
 from pathlib import Path
-if __name__ == "__main__":
-    project_root = Path(__file__).parent.parent
-    sys.path.insert(0, str(project_root))
 
 import json
 from typing import Any
@@ -419,10 +416,3 @@ def batch_cli() -> None:
 batch_cli.add_command(batch_submit)
 batch_cli.add_command(batch_status)
 batch_cli.add_command(batch_fetch)
-
-
-if __name__ == "__main__":
-    # Add project root to path for direct script execution
-    project_root = Path(__file__).parent.parent
-    sys.path.insert(0, str(project_root))
-    batch_cli()
