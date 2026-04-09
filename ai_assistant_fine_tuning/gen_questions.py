@@ -1,4 +1,4 @@
-"""Sync DPO preference data generation from documentation."""
+"""Step 1: Generate questions from documentation using a teacher model."""
 
 import logging
 from pathlib import Path
@@ -8,19 +8,17 @@ from openai import OpenAI
 
 from ai_assistant_fine_tuning.batch_util import write_jsonl
 from ai_assistant_fine_tuning.data_gen import (
-    DEFAULT_DPO_OUTPUT_FILE,
     DEFAULT_INPUT_DIR,
     DEFAULT_MODEL,
-    DEFAULT_SYSTEM_PROMPT,
-    format_for_dpo,
-    generate_preference_pairs,
-    write_readable_dpo,
+    DEFAULT_QUESTIONS_OUTPUT_FILE,
+    generate_questions,
+    write_readable_questions,
 )
 
 logger = logging.getLogger(__name__)
 
 
-@click.command("gen-dpo-td")
+@click.command("gen-questions")
 @click.option(
     "--input-dir",
     type=click.Path(exists=True, file_okay=False, path_type=Path),
@@ -32,9 +30,9 @@ logger = logging.getLogger(__name__)
     "--output",
     "-o",
     type=click.Path(dir_okay=False, path_type=Path),
-    default=DEFAULT_DPO_OUTPUT_FILE,
+    default=DEFAULT_QUESTIONS_OUTPUT_FILE,
     show_default=True,
-    help="Output JSONL file path for DPO records.",
+    help="Output JSONL file path for generated questions.",
 )
 @click.option(
     "--model",
@@ -44,29 +42,22 @@ logger = logging.getLogger(__name__)
     help="OpenAI teacher model to use.",
 )
 @click.option(
-    "--system-prompt",
-    default=DEFAULT_SYSTEM_PROMPT,
-    show_default=True,
-    help="System prompt to prefix into each generated DPO prompt.",
-)
-@click.option(
     "--append/--overwrite",
     default=False,
     show_default=True,
     help="Append to existing output file instead of overwriting.",
 )
-def gen_dpo_td(
+def gen_questions(
     input_dir: Path,
     output: Path,
     model: str,
-    system_prompt: str,
     append: bool,
 ) -> None:
-    """Generate DPO preference data from documentation using a teacher model.
+    """Generate questions + context-aware system messages from documentation.
 
     Recursively finds all *.md files in INPUT_DIR, sends each to the
-    OpenAI teacher model to produce prompt/chosen/rejected triples, and
-    writes JSONL suitable for DPO training with TRL.
+    teacher model to produce a system message and questions, and writes
+    questions JSONL (one line per source file).
     """
     md_files = sorted(input_dir.rglob("*.md"))
     if not md_files:
@@ -79,7 +70,7 @@ def gen_dpo_td(
 
     client = OpenAI()
 
-    total_pairs = 0
+    total_questions = 0
     txt_output = output.with_suffix(".txt")
     if not append:
         output.write_text("", encoding="utf-8")
@@ -95,14 +86,18 @@ def gen_dpo_td(
             continue
 
         try:
-            preference_pairs = generate_preference_pairs(client, content, model)
-            records = format_for_dpo(preference_pairs, system_prompt)
-            write_jsonl(records, output, append=True)
-            write_readable_dpo(preference_pairs, txt_output, source=str(rel), append=True)
-            total_pairs += len(records)
-            click.echo(f"{len(records)} preference pairs")
+            result = generate_questions(client, content, model)
+            record = {
+                "source": str(rel),
+                "system_message": result.system_message,
+                "questions": result.questions,
+            }
+            write_jsonl([record], output, append=True)
+            write_readable_questions(result, txt_output, source=str(rel), append=True)
+            total_questions += len(result.questions)
+            click.echo(f"{len(result.questions)} questions")
         except Exception as exc:
             click.echo(f"error: {exc}")
             logger.warning("Failed to process %s: %s", rel, exc)
 
-    click.echo(f"\nDone. Generated {total_pairs} DPO training examples -> {output}")
+    click.echo(f"\nDone. Generated {total_questions} questions -> {output}")

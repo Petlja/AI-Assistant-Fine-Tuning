@@ -7,9 +7,10 @@ from dotenv import load_dotenv
 
 from ai_assistant_fine_tuning.batch import batch_submit, fetch_batch
 from ai_assistant_fine_tuning.dpo_finetune import dpo_finetune
+from ai_assistant_fine_tuning.gen_td import gen_td
+from ai_assistant_fine_tuning.gen_answers import gen_answers
 from ai_assistant_fine_tuning.gen_batch import gen_batch
-from ai_assistant_fine_tuning.gen_dpo_td import gen_dpo_td
-from ai_assistant_fine_tuning.gen_sft_td import gen_sft_td
+from ai_assistant_fine_tuning.gen_questions import gen_questions
 from ai_assistant_fine_tuning.sft_finetune import sft_finetune
 
 
@@ -23,10 +24,11 @@ def cli() -> None:
         format="%(asctime)s %(levelname)s %(message)s",
     )
 
-# Generate training data synchronously using a teacher model (no Batch API)
-cli.add_command(gen_sft_td)
-cli.add_command(gen_dpo_td)
-# Generate training data and Batch API input/manifest for asynchronous processing
+# 3-step training data pipeline (sync)
+cli.add_command(gen_questions)    # Step 1: teacher generates questions
+cli.add_command(gen_answers)      # Step 2: local model answers questions
+cli.add_command(gen_td)           # Step 3: teacher scores & routes to SFT/DPO
+# Batch API support for Steps 1 and 3
 cli.add_command(gen_batch)
 cli.add_command(batch_submit)
 cli.add_command(fetch_batch)

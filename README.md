@@ -20,53 +20,93 @@ astft --version
 
 ## Commands
 
-### 1) gen-sft-td
+### 1) gen-questions
 
-Generate chat-format SFT JSONL (`messages: system/user/assistant`) from markdown files using a teacher model synchronously.
+**Step 1** — Generate questions and context-aware system messages from markdown
+lecture files using a teacher model.
 
 ```bash
-astft gen-sft-td --help
+astft gen-questions --help
 ```
 
 Options:
 
 - `--input-dir DIRECTORY` (default: `../data-preprocessing/dataset/`)
-- `--output, -o FILE` (default: `training_data.jsonl`)
+- `--output, -o FILE` (default: `questions.jsonl`)
 - `--model, -m TEXT` (default: `gpt-5.4-mini`)
-- `--system-prompt TEXT`
 - `--append / --overwrite` (default: overwrite)
 
 Example:
 
 ```bash
-astft gen-sft-td --input-dir ./dataset/os5_inf_prog --output training_data.jsonl --model gpt-4o-mini
+astft gen-questions --input-dir ./dataset/etit1_prog --output questions.jsonl --model gpt-4o-mini
 ```
 
-### 2) gen-dpo-td
+Output format (`questions.jsonl` — one line per source file):
 
-Generate DPO JSONL (`prompt/chosen/rejected`) from markdown files using a teacher model synchronously.
+```json
+{"source": "uvod/programski_jezici.md", "system_message": "You are a helpful assistant for a C programming course...", "questions": ["What is the difference between a compiler and an interpreter?", ...]}
+```
+
+### 2) gen-answers
+
+**Step 2** — Answer questions using a locally-served model (vLLM).
 
 ```bash
-astft gen-dpo-td --help
+astft gen-answers --help
 ```
 
 Options:
 
-- `--input-dir DIRECTORY` (default: `../data-preprocessing/dataset/`)
-- `--output, -o FILE` (default: `training_data_dpo.jsonl`)
-- `--model, -m TEXT` (default: `gpt-5.4-mini`)
-- `--system-prompt TEXT`
+- `--questions FILE` (default: `questions.jsonl`)
+- `--output, -o FILE` (default: `answers.jsonl`)
+- `--base-url TEXT` (default: `http://localhost:8000/v1`)
+- `--model, -m TEXT` (default: `Qwen/Qwen3-14B`)
+- `--api-key TEXT` (default: `EMPTY`)
 - `--append / --overwrite` (default: overwrite)
 
 Example:
 
 ```bash
-astft gen-dpo-td --input-dir ./dataset/os5_inf_prog --output training_data_dpo.jsonl --model gpt-4o-mini
+astft gen-answers --questions questions.jsonl --model Qwen/Qwen3-14B
 ```
 
-### 3) gen-batch
+Output format (`answers.jsonl` — one line per question):
 
-Prepare OpenAI Batch API input and manifest for asynchronous SFT or DPO training data generation.
+```json
+{"source": "uvod/programski_jezici.md", "system_message": "...", "question": "What is the difference...", "answer": "A compiler translates..."}
+```
+
+### 3) gen-td
+
+**Step 3** — Generate training data by evaluating answers using a teacher model.
+Good answers (score ≥ threshold) become SFT training data (using teacher's
+improved answer); bad answers become DPO training data (rejected = original,
+chosen = teacher-improved version).
+
+```bash
+astft gen-td --help
+```
+
+Options:
+
+- `--answers FILE` (default: `answers.jsonl`)
+- `--sft-output FILE` (default: `training_data.jsonl`)
+- `--dpo-output FILE` (default: `training_data_dpo.jsonl`)
+- `--model, -m TEXT` (default: `gpt-5.4-mini`)
+- `--threshold INT` (default: `7`, range 1-10)
+- `--append / --overwrite` (default: overwrite)
+
+Example:
+
+```bash
+astft gen-td --answers answers.jsonl --threshold 7 --model gpt-4o-mini
+```
+
+### 4) gen-batch
+
+Prepare OpenAI Batch API input and manifest for asynchronous question
+generation (Step 1) or evaluation (Step 3).
 
 ```bash
 astft gen-batch --help
@@ -74,22 +114,25 @@ astft gen-batch --help
 
 Options:
 
-- `--task [sft|dpo]` (required)
-- `--input-dir DIRECTORY` (default: `../data-preprocessing/dataset/`)
+- `--task [questions|evaluate]` (required)
+- `--input-dir DIRECTORY` (default: `../data-preprocessing/dataset/`, for task=questions)
+- `--answers FILE` (for task=evaluate, default: `answers.jsonl`)
 - `--output, -o FILE` (default depends on task)
 - `--model, -m TEXT` (default: `gpt-5.4-mini`)
-- `--system-prompt TEXT`
+- `--threshold INT` (default: `7`, stored in manifest for evaluate task)
 - `--batch-input FILE` (optional batch input JSONL path)
 - `--manifest FILE` (optional batch manifest path)
 
 Example:
 
 ```bash
-astft gen-batch --task sft --input-dir ./dataset/os5_inf_prog --output training_data.jsonl --model gpt-4o-mini
-astft gen-batch --task dpo --input-dir ./dataset/os5_inf_prog --output training_data_dpo.jsonl --model gpt-4o-mini
+# Batch question generation
+astft gen-batch --task questions --input-dir ./dataset/etit1_prog --model gpt-4o-mini
+# Batch evaluation
+astft gen-batch --task evaluate --answers answers.jsonl --model gpt-4o-mini
 ```
 
-### 4) batch-submit
+### 5) batch-submit
 
 Submit a prepared batch input file (from `gen-batch`) to OpenAI Batch API.
 
@@ -105,12 +148,12 @@ Options:
 Example:
 
 ```bash
-astft batch-submit --manifest training_data.batch.manifest.json
+astft batch-submit --manifest questions.batch.manifest.json
 ```
 
-### 5) fetch-batch
+### 6) fetch-batch
 
-Check batch status and fetch results if complete. If the batch is still running, prints current status and exits. If complete, downloads outputs and transforms them into training data JSONL.
+Check batch status and fetch results if complete.
 
 ```bash
 astft fetch-batch --help
@@ -119,19 +162,20 @@ astft fetch-batch --help
 Options:
 
 - `--manifest FILE` (required)
-- `--output FILE` (optional override final JSONL)
-- `--readable-output FILE` (optional override readable text output)
+- `--output FILE` (optional override)
+- `--readable-output FILE` (optional override)
+- `--threshold INT` (optional, overrides manifest value for evaluate task)
 - `--append / --overwrite` (default: overwrite)
 
 Example:
 
 ```bash
-astft fetch-batch --manifest training_data.batch.manifest.json --overwrite
+astft fetch-batch --manifest questions.batch.manifest.json --overwrite
 ```
 
-### 6) sft-finetune
+### 7) sft-finetune
 
-Run LoRA/QLoRA SFT fine-tuning on a CUDA GPU.
+Run LoRA SFT fine-tuning on a CUDA GPU.
 
 ```bash
 astft sft-finetune --help
@@ -150,7 +194,7 @@ Key options:
 - `--lora-r INT`
 - `--lora-alpha INT`
 - `--lora-dropout FLOAT`
-- `--use-4bit / --no-4bit`
+- `--use-4bit / --no-4bit` (default: no-4bit)
 
 Example:
 
@@ -158,7 +202,7 @@ Example:
 astft sft-finetune --data training_data.jsonl --model Qwen/Qwen3-14B --output-dir ./finetune-output
 ```
 
-### 7) dpo-finetune
+### 8) dpo-finetune
 
 Run DPO alignment from an existing SFT adapter.
 
@@ -181,7 +225,7 @@ Other options:
 - `--lr FLOAT`
 - `--max-seq-len INT`
 - `--beta FLOAT`
-- `--use-4bit / --no-4bit`
+- `--use-4bit / --no-4bit` (default: no-4bit)
 
 Example:
 
@@ -191,27 +235,34 @@ astft dpo-finetune --adapter ./finetune-output --training-data training_data_dpo
 
 ## Typical Pipelines
 
-### Pipeline A: Synchronous generation
+### Pipeline A: Synchronous 3-step generation
 
 ```bash
-astft gen-sft-td --input-dir ./dataset/os5_inf_prog --output training_data.jsonl --model gpt-4o-mini
-astft gen-dpo-td --input-dir ./dataset/os5_inf_prog --output training_data_dpo.jsonl --model gpt-4o-mini
+# Step 1: Generate questions from lectures (teacher model)
+astft gen-questions --input-dir ./dataset/etit1_prog --output questions.jsonl --model gpt-4o-mini
+
+# Step 2: Answer questions (local vLLM model — start vLLM first with serve.sh)
+astft gen-answers --questions questions.jsonl --model Qwen/Qwen3-14B
+
+# Step 3: Generate training data — evaluate & route (teacher model)
+astft gen-td --answers answers.jsonl --threshold 7 --model gpt-4o-mini
 ```
 
-### Pipeline B: Batch generation
+### Pipeline B: Batch generation (Steps 1 and 3 via OpenAI Batch API)
 
 ```bash
-# Create batch inputs + manifests
-astft gen-batch --task sft --input-dir ./dataset/os5_inf_prog --output training_data.jsonl --model gpt-4o-mini
-astft gen-batch --task dpo --input-dir ./dataset/os5_inf_prog --output training_data_dpo.jsonl --model gpt-4o-mini
+# Step 1 via batch
+astft gen-batch --task questions --input-dir ./dataset/etit1_prog --model gpt-4o-mini
+astft batch-submit --manifest questions.batch.manifest.json
+astft fetch-batch --manifest questions.batch.manifest.json --overwrite
 
-# Submit
+# Step 2: local model (always sync)
+astft gen-answers --questions questions.jsonl --model Qwen/Qwen3-14B
+
+# Step 3 via batch
+astft gen-batch --task evaluate --answers answers.jsonl --model gpt-4o-mini
 astft batch-submit --manifest training_data.batch.manifest.json
-astft batch-submit --manifest training_data_dpo.batch.manifest.json
-
-# Check status & fetch results when complete
-astft fetch-batch --manifest training_data.batch.manifest.json --overwrite
-astft fetch-batch --manifest training_data_dpo.batch.manifest.json --overwrite
+astft fetch-batch --manifest training_data.batch.manifest.json --threshold 7 --overwrite
 ```
 
 ### Pipeline C: Train and align
