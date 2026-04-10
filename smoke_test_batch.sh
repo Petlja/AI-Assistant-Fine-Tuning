@@ -61,6 +61,8 @@ wait_for_batch() {
   return 1
 }
 
+BATCH_TIMED_OUT=0
+
 if [ "$SKIP_GEN" != "1" ]; then
   # ── Step 1: Question generation via Batch API ──
   echo "=== Step 1a  gen-batch --task questions ==="
@@ -77,46 +79,54 @@ if [ "$SKIP_GEN" != "1" ]; then
   astft batch-submit --manifest "$OUT_DIR/questions.batch.manifest.json"
 
   echo "=== Step 1c  fetch-batch (questions) ==="
-  wait_for_batch \
+  if ! wait_for_batch \
     "$OUT_DIR/questions.batch.manifest.json" \
-    "$OUT_DIR/questions.jsonl"
+    "$OUT_DIR/questions.jsonl"; then
+    BATCH_TIMED_OUT=1
+  fi
 
-  # ── Step 2: Local model answers (always sync) ──
-  echo "=== Step 2  gen-answers ==="
-  astft gen-answers \
-    --questions "$OUT_DIR/questions.jsonl" \
-    --output "$OUT_DIR/answers.jsonl" \
-    --model "$LOCAL_MODEL" \
-    --overwrite
-  echo "  -> $(wc -l < "$OUT_DIR/answers.jsonl") answers"
+  if [ "$BATCH_TIMED_OUT" = "0" ]; then
+    # ── Step 2: Local model answers (always sync) ──
+    echo "=== Step 2  gen-answers ==="
+    astft gen-answers \
+      --questions "$OUT_DIR/questions.jsonl" \
+      --output "$OUT_DIR/answers.jsonl" \
+      --model "$LOCAL_MODEL" \
+      --overwrite
+    echo "  -> $(wc -l < "$OUT_DIR/answers.jsonl") answers"
 
-  # ── Step 3: Evaluation via Batch API ──
-  echo "=== Step 3a  gen-batch --task evaluate ==="
-  astft gen-batch \
-    --task evaluate \
-    --answers "$OUT_DIR/answers.jsonl" \
-    --output "$OUT_DIR/sft.jsonl" \
-    --model "$MODEL" \
-    --threshold 7 \
-    --batch-input "$OUT_DIR/evaluate.batch.input.jsonl" \
-    --manifest "$OUT_DIR/evaluate.batch.manifest.json"
-  echo "  -> $(wc -l < "$OUT_DIR/evaluate.batch.input.jsonl") batch requests"
+    # ── Step 3: Evaluation via Batch API ──
+    echo "=== Step 3a  gen-batch --task evaluate ==="
+    astft gen-batch \
+      --task evaluate \
+      --answers "$OUT_DIR/answers.jsonl" \
+      --output "$OUT_DIR/sft.jsonl" \
+      --model "$MODEL" \
+      --threshold 7 \
+      --batch-input "$OUT_DIR/evaluate.batch.input.jsonl" \
+      --manifest "$OUT_DIR/evaluate.batch.manifest.json"
+    echo "  -> $(wc -l < "$OUT_DIR/evaluate.batch.input.jsonl") batch requests"
 
-  echo "=== Step 3b  batch-submit (evaluate) ==="
-  astft batch-submit --manifest "$OUT_DIR/evaluate.batch.manifest.json"
+    echo "=== Step 3b  batch-submit (evaluate) ==="
+    astft batch-submit --manifest "$OUT_DIR/evaluate.batch.manifest.json"
 
-  echo "=== Step 3c  fetch-batch (evaluate) ==="
-  wait_for_batch \
-    "$OUT_DIR/evaluate.batch.manifest.json" \
-    "$OUT_DIR/sft.jsonl"
+    echo "=== Step 3c  fetch-batch (evaluate) ==="
+    if ! wait_for_batch \
+      "$OUT_DIR/evaluate.batch.manifest.json" \
+      "$OUT_DIR/sft.jsonl"; then
+      BATCH_TIMED_OUT=1
+    fi
+  fi
 
-  echo "  -> SFT: $(wc -l < "$OUT_DIR/sft.jsonl") rows"
-  [ -f "$OUT_DIR/training_data_dpo.jsonl" ] && echo "  -> DPO: $(wc -l < "$OUT_DIR/training_data_dpo.jsonl") rows"
+  if [ "$BATCH_TIMED_OUT" = "0" ]; then
+    echo "  -> SFT: $(wc -l < "$OUT_DIR/sft.jsonl") rows"
+    [ -f "$OUT_DIR/training_data_dpo.jsonl" ] && echo "  -> DPO: $(wc -l < "$OUT_DIR/training_data_dpo.jsonl") rows"
+  fi
 else
   echo "=== Skipping batch generation/submit/fetch (SKIP_GEN=1) ==="
 fi
 
-if [ "$SKIP_FINETUNE" != "1" ]; then
+if [ "$SKIP_FINETUNE" != "1" ] && [ "$BATCH_TIMED_OUT" = "0" ]; then
   SFT_DATA="$OUT_DIR/sft.jsonl"
   DPO_DATA="$OUT_DIR/training_data_dpo.jsonl"
 
@@ -153,10 +163,16 @@ else
 fi
 
 echo ""
-echo "=== Batch smoke test complete ==="
-echo "Output in: $OUT_DIR"
-echo ""
-echo "Resume commands if fetch loop times out:"
-echo "  astft fetch-batch --manifest $OUT_DIR/questions.batch.manifest.json --output $OUT_DIR/questions.jsonl --overwrite"
-echo "  astft fetch-batch --manifest $OUT_DIR/evaluate.batch.manifest.json --output $OUT_DIR/sft.jsonl --overwrite"
-echo "  Then continue: SKIP_GEN=1 bash $SCRIPT_DIR/smoke_test_batch.sh"
+if [ "$BATCH_TIMED_OUT" = "1" ]; then
+  echo "=== Batch smoke test INCOMPLETE (fetch timed out) ==="
+  echo "Output in: $OUT_DIR"
+  echo ""
+  echo "Resume commands:"
+  echo "  astft fetch-batch --manifest $OUT_DIR/questions.batch.manifest.json --output $OUT_DIR/questions.jsonl --overwrite"
+  echo "  astft fetch-batch --manifest $OUT_DIR/evaluate.batch.manifest.json --output $OUT_DIR/sft.jsonl --overwrite"
+  echo "  Then continue: SKIP_GEN=1 bash $SCRIPT_DIR/smoke_test_batch.sh"
+  exit 1
+else
+  echo "=== Batch smoke test complete ==="
+  echo "Output in: $OUT_DIR"
+fi

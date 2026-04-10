@@ -7,7 +7,7 @@ import click
 from openai import OpenAI
 
 from ai_assistant_fine_tuning.batch_util import write_jsonl
-from ai_assistant_fine_tuning.data_gen import (
+from ai_assistant_fine_tuning.core import (
     DEFAULT_INPUT_DIR,
     DEFAULT_MODEL,
     DEFAULT_QUESTIONS_OUTPUT_FILE,

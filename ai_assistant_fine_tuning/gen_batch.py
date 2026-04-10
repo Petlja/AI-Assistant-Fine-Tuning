@@ -15,7 +15,7 @@ from ai_assistant_fine_tuning.batch_util import (
     utc_now_iso,
     write_jsonl,
 )
-from ai_assistant_fine_tuning.data_gen import (
+from ai_assistant_fine_tuning.core import (
     DEFAULT_ANSWERS_OUTPUT_FILE,
     DEFAULT_INPUT_DIR,
     DEFAULT_MODEL,
