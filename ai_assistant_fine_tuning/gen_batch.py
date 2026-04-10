@@ -17,6 +17,7 @@ from ai_assistant_fine_tuning.batch_util import (
 )
 from ai_assistant_fine_tuning.core import (
     DEFAULT_ANSWERS_OUTPUT_FILE,
+    DEFAULT_DPO_OUTPUT_FILE,
     DEFAULT_INPUT_DIR,
     DEFAULT_MODEL,
     DEFAULT_QUESTIONS_OUTPUT_FILE,

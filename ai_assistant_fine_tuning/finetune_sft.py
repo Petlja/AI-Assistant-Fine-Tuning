@@ -126,7 +126,6 @@ def sft_finetune(
             quantization_config=bnb_config,
             device_map=device_map,
             dtype=torch.bfloat16,
-            attn_implementation="sdpa",
         )
     except torch.OutOfMemoryError as exc:
         free_bytes, total_bytes = torch.cuda.mem_get_info()
