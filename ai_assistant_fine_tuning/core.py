@@ -19,6 +19,14 @@ from typing import Any
 from openai import OpenAI
 from pydantic import BaseModel, Field
 
+
+from plct_ai_data_unifier.metadata_model import (
+    PetljaActivityEnum,
+    PlctSegmentEnum,
+    UdBook,
+    UdSegment,
+)
+
 # ---------------------------------------------------------------------------
 # Defaults
 # ---------------------------------------------------------------------------
@@ -35,9 +43,10 @@ DEFAULT_VLLM_API_KEY = "EMPTY"
 DEFAULT_THRESHOLD = 7
 
 DEFAULT_SYSTEM_PROMPT = (
-    "You are a helpful AI assistant for teachers. "
-    "Help teachers prepare lessons clearly, accurately, and concisely "
-    "based on the provided study material."
+    "You are an AI teaching assistant on the LMS platform. "
+    "Help teachers prepare lessons by answering questions accurately and concisely "
+    "based on the provided course material. Format your answers in Markdown. "
+    "Answer in the same language as the question."
 )
 
 # ---------------------------------------------------------------------------
@@ -45,29 +54,48 @@ DEFAULT_SYSTEM_PROMPT = (
 # ---------------------------------------------------------------------------
 
 QUESTION_GENERATION_PROMPT = """\
-You are an expert educator. Given the following lecture / study material, \
+You are helping build training data for an AI teaching assistant deployed on \
+the LMS platform.  Teachers interact with this assistant via chat while \
+preparing lessons — they ask questions about the course material and expect \
+accurate, concise, Markdown-formatted answers grounded in that material.
+
+The assistant in production receives:
+- A course summary and current lesson summary as context.
+- Relevant chunks from the lesson content via RAG (retrieval-augmented generation).
+- The teacher's question (which may be in Serbian Cyrillic, Serbian Latin, or English).
+
+The assistant answers in the same language as the question and formats output \
+in Markdown.  If unsure, it says so rather than guessing.
+
+Given the following study material (a lecture or quiz from an online course), \
 generate:
 
-1. A short **system_message** (1-3 sentences) that sets the context for an AI \
-assistant answering questions about this specific lecture topic.  The system \
-message must mention the subject area so that every question makes sense on \
-its own (e.g., if the lecture is about Python, the system message should say so, \
-so a question about "printing to stdout" will be answered with `print()`, \
-not `cout`).
+1. A **system_message** (2-4 sentences) that will be given to the AI assistant \
+so it knows the exact course context.  The system_message MUST include:
+   - The subject and the specific topic of this material.
+   - That the assistant helps teachers prepare lessons from this material.
+   - The language context (e.g. "Questions and answers should be in Serbian").
+   This is critical for disambiguation — if the course is about C, a question \
+about "printing to stdout" must be answered with `printf`, not `print` or `cout`.
 
-2. A list of **questions** a teacher might ask while preparing a lesson from \
-this material.
+2. A list of **questions** a teacher would realistically ask this AI assistant \
+while preparing or reviewing a lesson based on this material.
 
-Requirements:
-- Generate between 3 and 15 questions depending on the length and richness of \
-the material.
-- Questions must be self-contained — a reader seeing only the system message \
-and the question should understand what is being asked.
-- Cover key concepts, definitions, explanations, comparisons, examples, and \
-practical teaching use.
+Requirements for the questions:
+- Generate between 3 and 15 questions depending on how rich the material is.
+- Questions must be self-contained — someone reading only the system_message \
+and the question must understand what is being asked without seeing the material.
+- Focus on what a teacher actually needs:
+  * Explaining concepts to students clearly.
+  * Clarifying definitions and terminology.
+  * Finding good examples or analogies for difficult topics.
+  * Understanding how topics connect to each other.
+  * Anticipating student misconceptions and common mistakes.
+  * Pedagogical approaches — e.g. "How would I explain time complexity to a \
+student who doesn't have a strong math background?"
 - Vary question types: factual recall, conceptual explanation, comparison, \
-classroom-application.
-- Use the same language as the source material.
+pedagogical strategy, practical classroom use.
+- Write all questions in the same language as the source material.
 
 --- MATERIAL ---
 {content}
@@ -75,42 +103,62 @@ classroom-application.
 """
 
 EVALUATION_PROMPT = """\
-You are an expert educator and evaluator.
+You are evaluating an answer produced by an AI teaching assistant deployed on \
+the LMS platform.  In production, this assistant receives course/lesson \
+summaries and RAG-retrieved content chunks as context, then answers teacher \
+questions via chat in Markdown format.
+
+The assistant should give accurate, concise, and practically useful answers \
+grounded in the course material.  If the assistant is unsure, it should say so \
+rather than guessing.  Answers must be in the same language as the question.
 
 Context (system message that was given to the answering assistant):
 {system_message}
 
-Question:
+Question the teacher asked:
 {question}
 
-Answer to evaluate:
+Assistant's answer:
 {answer}
 
 Score the answer on a scale from 1 to 10:
-- 1-3: incorrect, irrelevant, or dangerously misleading
-- 4-6: partially correct but missing important details or slightly inaccurate
-- 7-8: mostly correct and useful, minor issues
-- 9-10: excellent, accurate, well-structured
+- 1-3: incorrect, irrelevant, or could mislead a teacher/student
+- 4-6: partially correct but missing important details, vague, or slightly \
+inaccurate for the course context
+- 7-8: mostly correct and useful, minor issues or could be more concise
+- 9-10: excellent — accurate, well-structured, appropriate for the course \
+context, and directly useful for lesson preparation
 
-Then provide an **improved_answer** that would deserve a 9 or 10.
+Key evaluation criteria:
+- Is the answer faithful to the specific course subject? (e.g. C-specific if \
+the course is about C, not generic programming advice)
+- Would a teacher find this answer practically useful for lesson prep?
+- Is it concise without sacrificing important details?
+- Is it formatted cleanly in Markdown?
+- Does it admit uncertainty rather than hallucinating when appropriate?
+- For pedagogical questions: does it offer concrete strategies a teacher can \
+actually use in a classroom?
 
-Return both the numeric score and the improved answer.
+Then provide an **improved_answer** that would score 9-10.  The improved answer \
+must be written as if the AI assistant is directly responding to the teacher — \
+in the same language as the question, formatted in Markdown.
 """
 
 # Task-specific config used by both sync and batch paths.
 TASK_CONFIG = {
     "questions": {
-        "system_message": "You generate questions from study material.",
+        "system_message": "You generate training data for an AI teaching assistant on the Petlja LMS platform. Given course material, produce a context-setting system message and realistic teacher questions.",
         "batch_system_message": (
-            "You generate questions from study material. "
+            "You generate training data for an AI teaching assistant on the Petlja LMS platform. "
+            "Given course material, produce a context-setting system message and realistic teacher questions. "
             "Return ONLY a valid JSON object with 'system_message' and 'questions' keys."
         ),
         "generation_prompt": QUESTION_GENERATION_PROMPT,
     },
     "evaluate": {
-        "system_message": "You evaluate and improve answers.",
+        "system_message": "You evaluate and improve answers from an AI teaching assistant on the Petlja LMS platform that helps teachers prepare lessons for online courses.",
         "batch_system_message": (
-            "You evaluate and improve answers. "
+            "You evaluate and improve answers from an AI teaching assistant. "
             "Return ONLY a valid JSON object with 'score' and 'improved_answer' keys."
         ),
         "generation_prompt": EVALUATION_PROMPT,
@@ -134,6 +182,81 @@ class EvaluationResult(BaseModel):
 
     score: int = Field(ge=1, le=10)
     improved_answer: str
+
+
+
+_CONTENT_SOURCE_TYPES = {PetljaActivityEnum.READING.value, PlctSegmentEnum.ACTIVITY.value}
+
+
+def _iter_content_paths(segments: list[UdSegment]) -> list[str]:
+    paths: list[str] = []
+    for segment in segments:
+        if segment.source_type in _CONTENT_SOURCE_TYPES and segment.content_path:
+            paths.append(segment.content_path)
+        if segment.sub_segments:
+            paths.extend(_iter_content_paths(segment.sub_segments))
+    return paths
+
+
+def _resolve_struct_content_path(
+    input_dir: Path,
+    structure_dir: Path,
+    content_path: str,
+) -> Path | None:
+    # Some datasets store paths from dataset root, others from book root.
+    normalized = content_path.replace("\\", "/")
+    candidates: list[Path] = [
+        input_dir / normalized,
+        structure_dir / normalized,
+    ]
+
+    if normalized.startswith(f"{structure_dir.name}/"):
+        candidates.append(structure_dir / normalized[len(structure_dir.name) + 1 :])
+
+    for candidate in candidates:
+        if candidate.exists() and candidate.is_file() and candidate.suffix.lower() == ".md":
+            return candidate
+    return None
+
+
+def collect_markdown_sources(input_dir: Path) -> list[tuple[str, Path]]:
+    """Collect markdown sources, preferring structure.json when available.
+
+    Returns a sorted list of tuples: (source_rel_path, absolute_path).
+    """
+    structure_files: list[Path] = []
+    root_structure = input_dir / "structure.json"
+    if root_structure.exists():
+        structure_files.append(root_structure)
+    else:
+        for child in sorted(input_dir.iterdir()):
+            candidate = child / "structure.json"
+            if child.is_dir() and candidate.exists():
+                structure_files.append(candidate)
+
+    records: list[tuple[str, Path]] = []
+    seen: set[str] = set()
+
+    if structure_files:
+        for structure_file in structure_files:
+            structure_dir = structure_file.parent
+            book = UdBook.model_validate_json(structure_file.read_text(encoding="utf-8"))
+            for content_path in _iter_content_paths(book.segments):
+                resolved = _resolve_struct_content_path(input_dir, structure_dir, content_path)
+                if resolved is None:
+                    continue
+                rel = resolved.relative_to(input_dir).as_posix()
+                if rel in seen:
+                    continue
+                seen.add(rel)
+                records.append((rel, resolved))
+        return sorted(records, key=lambda item: item[0])
+
+    # Fallback: plain recursive scan for legacy datasets.
+    for md_file in sorted(input_dir.rglob("*.md")):
+        rel = md_file.relative_to(input_dir).as_posix()
+        records.append((rel, md_file))
+    return records
 
 
 # ---------------------------------------------------------------------------

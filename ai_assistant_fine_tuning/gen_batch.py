@@ -24,6 +24,7 @@ from ai_assistant_fine_tuning.core import (
     DEFAULT_THRESHOLD,
     EVALUATION_PROMPT,
     TASK_CONFIG,
+    collect_markdown_sources,
 )
 
 logger = logging.getLogger(__name__)
@@ -125,13 +126,13 @@ def _gen_batch_questions(
     default_output = Path(DEFAULT_QUESTIONS_OUTPUT_FILE)
     output = output or default_output
 
-    md_files = sorted(input_dir.rglob("*.md"))
-    if not md_files:
+    sources = collect_markdown_sources(input_dir)
+    if not sources:
         click.echo(f"No *.md files found in {input_dir}")
         raise SystemExit(1)
 
     click.echo(f"Task: questions")
-    click.echo(f"Found {len(md_files)} markdown file(s) in {input_dir}")
+    click.echo(f"Found {len(sources)} markdown file(s) in {input_dir}")
     click.echo(f"Teacher model: {model}")
 
     cfg = TASK_CONFIG["questions"]
@@ -144,13 +145,12 @@ def _gen_batch_questions(
     batch_records: list[dict] = []
     manifest_requests: list[dict] = []
 
-    for md_file in md_files:
-        rel = md_file.relative_to(input_dir)
+    for rel, md_file in sources:
         content = md_file.read_text(encoding="utf-8")
         if len(content.strip()) < 50:
             continue
 
-        custom_id = make_custom_id("questions", rel, content)
+        custom_id = make_custom_id("questions", Path(rel), content)
         messages = [
             {"role": "system", "content": cfg["batch_system_message"]},
             {"role": "user", "content": cfg["generation_prompt"].format(content=content)},
@@ -166,7 +166,7 @@ def _gen_batch_questions(
         manifest_requests.append(
             {
                 "custom_id": custom_id,
-                "source_rel_path": rel.as_posix(),
+                "source_rel_path": rel,
                 "content_sha1": short_sha1(content, length=40),
                 "status": "pending",
             }

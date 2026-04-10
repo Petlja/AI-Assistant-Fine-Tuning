@@ -11,12 +11,13 @@ from ai_assistant_fine_tuning.core import (
     DEFAULT_INPUT_DIR,
     DEFAULT_MODEL,
     DEFAULT_QUESTIONS_OUTPUT_FILE,
+    collect_markdown_sources,
     generate_questions,
     write_readable_questions,
 )
 
 logger = logging.getLogger(__name__)
-
+MINIMUM_CONTENT_LENGTH = 50  # Skip files with very short content
 
 @click.command("gen-questions")
 @click.option(
@@ -59,12 +60,12 @@ def gen_questions(
     teacher model to produce a system message and questions, and writes
     questions JSONL (one line per source file).
     """
-    md_files = sorted(input_dir.rglob("*.md"))
-    if not md_files:
+    sources = collect_markdown_sources(input_dir)
+    if not sources:
         click.echo(f"No *.md files found in {input_dir}")
         raise SystemExit(1)
 
-    click.echo(f"Found {len(md_files)} markdown file(s) in {input_dir}")
+    click.echo(f"Found {len(sources)} markdown file(s) in {input_dir}")
     click.echo(f"Teacher model: {model}")
     click.echo(f"Output: {output}")
 
@@ -76,24 +77,23 @@ def gen_questions(
         output.write_text("", encoding="utf-8")
         txt_output.write_text("", encoding="utf-8")
 
-    for i, md_file in enumerate(md_files, 1):
-        rel = md_file.relative_to(input_dir)
-        click.echo(f"[{i}/{len(md_files)}] Processing {rel} ... ", nl=False)
+    for i, (rel, md_file) in enumerate(sources, 1):
+        click.echo(f"[{i}/{len(sources)}] Processing {rel} ... ", nl=False)
 
         content = md_file.read_text(encoding="utf-8")
-        if len(content.strip()) < 50:
+        if len(content.strip()) < MINIMUM_CONTENT_LENGTH:
             click.echo("skipped (too short)")
             continue
 
         try:
             result = generate_questions(client, content, model)
             record = {
-                "source": str(rel),
+                "source": rel,
                 "system_message": result.system_message,
                 "questions": result.questions,
             }
             write_jsonl([record], output, append=True)
-            write_readable_questions(result, txt_output, source=str(rel), append=True)
+            write_readable_questions(result, txt_output, source=rel, append=True)
             total_questions += len(result.questions)
             click.echo(f"{len(result.questions)} questions")
         except Exception as exc:

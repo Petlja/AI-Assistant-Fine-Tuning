@@ -40,6 +40,7 @@ dependencies = [
     # CLI
     "click>=8.0",
     "python-dotenv",
+    "plct-ai-data-unifier; python_version >= '3.12'",
 ]
 
 [project.scripts]
@@ -54,6 +55,9 @@ dev = [
 [tool.uv]
 extra-index-url = ["https://download.pytorch.org/whl/cu128"]
 index-strategy = "unsafe-best-match"
+
+[tool.uv.sources]
+plct-ai-data-unifier = { path = "../PLCT-AI-Data-Unifier", editable = true }
 
 [build-system]
 requires = ["hatchling"]
