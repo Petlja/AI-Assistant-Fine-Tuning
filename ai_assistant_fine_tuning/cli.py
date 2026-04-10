@@ -6,12 +6,12 @@ import click
 from dotenv import load_dotenv
 
 from ai_assistant_fine_tuning.batch import batch_submit, fetch_batch
-from ai_assistant_fine_tuning.dpo_finetune import dpo_finetune
+from ai_assistant_fine_tuning.finetune_dpo import dpo_finetune
 from ai_assistant_fine_tuning.gen_td import gen_td
 from ai_assistant_fine_tuning.gen_answers import gen_answers
 from ai_assistant_fine_tuning.gen_batch import gen_batch
 from ai_assistant_fine_tuning.gen_questions import gen_questions
-from ai_assistant_fine_tuning.sft_finetune import sft_finetune
+from ai_assistant_fine_tuning.finetune_sft import sft_finetune
 
 
 @click.group()
