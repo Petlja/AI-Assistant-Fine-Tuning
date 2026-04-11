@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from pathlib import Path
 from typing import Any
 
 import click
-from openai import OpenAI
+from openai import AuthenticationError, OpenAI
 
 from ai_assistant_fine_tuning.batch_util import (
     load_manifest,
@@ -29,6 +30,19 @@ from ai_assistant_fine_tuning.core import (
 logger = logging.getLogger(__name__)
 
 TERMINAL_BATCH_STATES = {"completed", "failed", "expired", "cancelled"}
+
+def _openai_call_with_retry(label: str, fn, *args):
+    """Call an OpenAI API method, retrying up to 5 times on transient 401s."""
+    delay = 2
+    for attempt in range(1, 6):
+        try:
+            return fn(*args)
+        except AuthenticationError:
+            if attempt == 5:
+                raise
+            logger.warning("Transient 401 on %s (attempt %d/5), retrying in %ds...", label, attempt, delay)
+            time.sleep(delay)
+            delay *= 2
 
 
 def _safe_text_from_file_content(file_content: Any) -> str:
@@ -170,7 +184,7 @@ def fetch_batch(
         raise click.ClickException("Manifest does not contain a batch id. Run batch-submit first.")
 
     client = OpenAI()
-    batch_obj = client.batches.retrieve(batch_id)
+    batch_obj = _openai_call_with_retry("batches.retrieve", client.batches.retrieve, batch_id)
     update_manifest_batch_state(manifest_obj, batch_obj)
 
     # If not terminal, report status and exit.
@@ -195,7 +209,9 @@ def fetch_batch(
         save_manifest(manifest_obj, manifest)
         raise click.ClickException("Batch has no output file.")
 
-    output_text = _safe_text_from_file_content(client.files.content(output_file_id))
+    output_text = _safe_text_from_file_content(
+        _openai_call_with_retry("files.content", client.files.content, output_file_id)
+    )
     output_lines: list[dict[str, Any]] = []
     for raw_line in output_text.splitlines():
         raw_line = raw_line.strip()
@@ -219,7 +235,9 @@ def fetch_batch(
     # Process error file if present.
     error_file_id = getattr(batch_obj, "error_file_id", None)
     if error_file_id:
-        error_text = _safe_text_from_file_content(client.files.content(error_file_id))
+        error_text = _safe_text_from_file_content(
+            _openai_call_with_retry("files.content", client.files.content, error_file_id)
+        )
         for raw_line in error_text.splitlines():
             raw_line = raw_line.strip()
             if not raw_line:
@@ -261,8 +279,12 @@ def _process_questions_batch(
     final_output_path = output_path or Path(manifest_obj["final_output_file"])
     final_readable_path = readable_output or Path(manifest_obj["final_readable_file"])
 
-    final_records: list[dict[str, Any]] = []
-    readable_items: list[dict[str, Any]] = []
+    if not append:
+        final_output_path.write_text("", encoding="utf-8")
+        final_readable_path.write_text("", encoding="utf-8")
+
+    total_questions = 0
+    succeeded_sources = 0
 
     for line in output_lines:
         custom_id = line.get("custom_id")
@@ -292,24 +314,22 @@ def _process_questions_batch(
                 "system_message": system_message,
                 "questions": questions,
             }
-            final_records.append(record)
-            readable_items.append({
-                "source": source,
-                "system_message": system_message,
-                "questions": questions,
-            })
+            # Write JSONL + .txt immediately per source (constant memory).
+            write_jsonl([record], final_output_path, append=True)
+            write_readable_questions_raw(
+                [{"source": source, "system_message": system_message, "questions": questions}],
+                final_readable_path,
+                append=True,
+            )
 
             manifest_req["status"] = "succeeded"
             manifest_req["generated_count"] = len(questions)
+            total_questions += len(questions)
+            succeeded_sources += 1
         except Exception:
             manifest_req["status"] = "failed_parse"
 
-    if final_records:
-        write_jsonl(final_records, final_output_path, append=append)
-        write_readable_questions_raw(readable_items, final_readable_path, append=append)
-
-    total_questions = sum(len(r["questions"]) for r in final_records)
-    click.echo(f"Generated {total_questions} questions from {len(final_records)} source(s) -> {final_output_path}")
+    click.echo(f"Generated {total_questions} questions from {succeeded_sources} source(s) -> {final_output_path}")
 
 
 def _process_evaluate_batch(
@@ -326,9 +346,13 @@ def _process_evaluate_batch(
     final_dpo_path = Path(manifest_obj["final_dpo_file"])
     final_readable_path = readable_output or Path(manifest_obj["final_readable_file"])
 
-    sft_records: list[dict[str, Any]] = []
-    dpo_records: list[dict[str, Any]] = []
-    readable_items: list[dict[str, Any]] = []
+    if not append:
+        final_sft_path.write_text("", encoding="utf-8")
+        final_dpo_path.write_text("", encoding="utf-8")
+        final_readable_path.write_text("", encoding="utf-8")
+
+    sft_count = 0
+    dpo_count = 0
 
     for line in output_lines:
         custom_id = line.get("custom_id")
@@ -362,19 +386,27 @@ def _process_evaluate_batch(
             )
 
             routed_to = "SFT" if sft_rec else "DPO"
-            if sft_rec:
-                sft_records.append(sft_rec)
-            if dpo_rec:
-                dpo_records.append(dpo_rec)
 
-            readable_items.append({
-                "source": source,
-                "question": question,
-                "answer": answer,
-                "score": eval_result.score,
-                "improved_answer": eval_result.improved_answer,
-                "routed_to": routed_to,
-            })
+            # Write JSONL + .txt immediately per record (constant memory).
+            if sft_rec:
+                write_jsonl([sft_rec], final_sft_path, append=True)
+                sft_count += 1
+            if dpo_rec:
+                write_jsonl([dpo_rec], final_dpo_path, append=True)
+                dpo_count += 1
+
+            write_readable_evaluation_raw(
+                [{
+                    "source": source,
+                    "question": question,
+                    "answer": answer,
+                    "score": eval_result.score,
+                    "improved_answer": eval_result.improved_answer,
+                    "routed_to": routed_to,
+                }],
+                final_readable_path,
+                append=True,
+            )
 
             manifest_req["status"] = "succeeded"
             manifest_req["score"] = eval_result.score
@@ -382,12 +414,5 @@ def _process_evaluate_batch(
         except Exception:
             manifest_req["status"] = "failed_parse"
 
-    if sft_records:
-        write_jsonl(sft_records, final_sft_path, append=append)
-    if dpo_records:
-        write_jsonl(dpo_records, final_dpo_path, append=append)
-    if readable_items:
-        write_readable_evaluation_raw(readable_items, final_readable_path, append=append)
-
-    click.echo(f"SFT: {len(sft_records)} records -> {final_sft_path}")
-    click.echo(f"DPO: {len(dpo_records)} records -> {final_dpo_path}")
+    click.echo(f"SFT: {sft_count} records -> {final_sft_path}")
+    click.echo(f"DPO: {dpo_count} records -> {final_dpo_path}")
