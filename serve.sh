@@ -2,7 +2,7 @@
 set -euo pipefail
 
 BASE_MODEL="${BASE_MODEL:-Qwen/Qwen3-14B}"
-ADAPTER_PATH="${ADAPTER_PATH:-./finetune-output}"
+ADAPTER_PATH="${ADAPTER_PATH:-./finetune-output/v1}"
 ADAPTER_NAME="${ADAPTER_NAME:-Qwen3-14B-ft}"
 MAX_LORA_RANK="${MAX_LORA_RANK:-16}"
 PORT="${PORT:-8000}"
