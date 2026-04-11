@@ -1,7 +1,9 @@
 """Step 2: Answer generated questions using a local vLLM model."""
 
 import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+from threading import Lock
 
 import click
 from openai import OpenAI
@@ -60,6 +62,13 @@ logger = logging.getLogger(__name__)
     show_default=True,
     help="Append to existing output file instead of overwriting.",
 )
+@click.option(
+    "--concurrency",
+    type=click.IntRange(1, 64),
+    default=8,
+    show_default=True,
+    help="Number of parallel requests to the local model.",
+)
 def gen_answers(
     questions: Path,
     output: Path,
@@ -67,6 +76,7 @@ def gen_answers(
     model: str,
     api_key: str,
     append: bool,
+    concurrency: int,
 ) -> None:
     """Answer questions using a local vLLM model.
 
@@ -82,6 +92,7 @@ def gen_answers(
     total_questions = sum(len(r.get("questions", [])) for r in question_records)
     click.echo(f"Loaded {len(question_records)} source(s), {total_questions} question(s)")
     click.echo(f"Local model: {model} @ {base_url}")
+    click.echo(f"Concurrency: {concurrency}")
     click.echo(f"Output: {output}")
 
     client = OpenAI(base_url=base_url, api_key=api_key)
@@ -91,46 +102,50 @@ def gen_answers(
         output.write_text("", encoding="utf-8")
         txt_output.write_text("", encoding="utf-8")
 
-    total_answers = 0
-    answer_batch: list[dict[str, str]] = []
-
+    # Flatten all questions into work items
+    work_items = []
     for rec in question_records:
         source = rec.get("source", "unknown")
         system_message = rec.get("system_message", "")
-        qs = rec.get("questions", [])
+        for q in rec.get("questions", []):
+            work_items.append((source, system_message, q))
 
-        click.echo(f"[{source}] answering {len(qs)} question(s)...")
+    write_lock = Lock()
+    total_answers = 0
+    total_errors = 0
 
-        for j, q in enumerate(qs, 1):
-            click.echo(f"  Q{j}/{len(qs)} ... ", nl=False)
+    def _answer_one(item):
+        source, system_message, q = item
+        completion = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": system_message},
+                {"role": "user", "content": q},
+            ],
+            max_completion_tokens=8000,
+            temperature=0.5,
+        )
+        return {
+            "source": source,
+            "system_message": system_message,
+            "question": q,
+            "answer": completion.choices[0].message.content or "",
+        }
+
+    with ThreadPoolExecutor(max_workers=concurrency) as pool:
+        futures = {pool.submit(_answer_one, item): item for item in work_items}
+        for future in as_completed(futures):
             try:
-                completion = client.chat.completions.create(
-                    model=model,
-                    messages=[
-                        {"role": "system", "content": system_message},
-                        {"role": "user", "content": q},
-                    ],
-                    max_completion_tokens=8000,
-                    temperature=0.5,
-                )
-                answer_text = completion.choices[0].message.content or ""
-
-                answer_record = {
-                    "source": source,
-                    "system_message": system_message,
-                    "question": q,
-                    "answer": answer_text,
-                }
-                write_jsonl([answer_record], output, append=True)
-                answer_batch.append(answer_record)
-                total_answers += 1
-                click.echo("ok")
+                record = future.result()
+                with write_lock:
+                    write_jsonl([record], output, append=True)
+                    write_readable_answers([record], txt_output, append=True)
+                    total_answers += 1
+                    if total_answers % 100 == 0:
+                        click.echo(f"  Progress: {total_answers}/{len(work_items)}")
             except Exception as exc:
-                click.echo(f"error: {exc}")
-                logger.warning("Failed Q%d for %s: %s", j, source, exc)
+                total_errors += 1
+                source = futures[future][0]
+                logger.warning("Failed for %s: %s", source, exc)
 
-    # Write readable output
-    if answer_batch:
-        write_readable_answers(answer_batch, txt_output, append=append)
-
-    click.echo(f"\nDone. Generated {total_answers} answers -> {output}")
+    click.echo(f"\nDone. Generated {total_answers} answers, {total_errors} errors -> {output}")
