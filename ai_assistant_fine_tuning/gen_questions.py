@@ -28,12 +28,12 @@ MINIMUM_CONTENT_LENGTH = 50  # Skip files with very short content
     help="Directory containing markdown documentation files.",
 )
 @click.option(
-    "--output",
+    "--output-dir",
     "-o",
-    type=click.Path(dir_okay=False, path_type=Path),
-    default=DEFAULT_QUESTIONS_OUTPUT_FILE,
+    type=click.Path(file_okay=False, path_type=Path),
+    default=Path("finetunedata/questions_batch"),
     show_default=True,
-    help="Output JSONL file path for generated questions.",
+    help="Output directory for generated questions (questions.jsonl, questions.txt)",
 )
 @click.option(
     "--model",
@@ -50,7 +50,7 @@ MINIMUM_CONTENT_LENGTH = 50  # Skip files with very short content
 )
 def gen_questions(
     input_dir: Path,
-    output: Path,
+    output_dir: Path,
     model: str,
     append: bool,
 ) -> None:
@@ -66,16 +66,20 @@ def gen_questions(
         raise SystemExit(1)
 
     click.echo(f"Found {len(sources)} markdown file(s) in {input_dir}")
+
     click.echo(f"Teacher model: {model}")
-    click.echo(f"Output: {output}")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_file = output_dir / "questions.jsonl"
+    txt_output = output_dir / "questions.txt"
+    click.echo(f"Output: {output_file}")
 
     client = OpenAI()
 
     total_questions = 0
-    txt_output = output.with_suffix(".txt")
     if not append:
-        output.write_text("", encoding="utf-8")
+        output_file.write_text("", encoding="utf-8")
         txt_output.write_text("", encoding="utf-8")
+
 
     for i, (rel, md_file) in enumerate(sources, 1):
         click.echo(f"[{i}/{len(sources)}] Processing {rel} ... ", nl=False)
@@ -92,7 +96,7 @@ def gen_questions(
                 "system_message": result.system_message,
                 "questions": result.questions,
             }
-            write_jsonl([record], output, append=True)
+            write_jsonl([record], output_file, append=True)
             write_readable_questions(result, txt_output, source=rel, append=True)
             total_questions += len(result.questions)
             click.echo(f"{len(result.questions)} questions")
@@ -100,4 +104,4 @@ def gen_questions(
             click.echo(f"error: {exc}")
             logger.warning("Failed to process %s: %s", rel, exc)
 
-    click.echo(f"\nDone. Generated {total_questions} questions -> {output}")
+    click.echo(f"\nDone. Generated {total_questions} questions -> {output_file}")
