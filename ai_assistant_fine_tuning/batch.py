@@ -137,17 +137,11 @@ def batch_submit(manifest: Path, batch_input: Path | None) -> None:
     help="Path to manifest JSON.",
 )
 @click.option(
-    "--output",
-    "output_path",
-    type=click.Path(dir_okay=False, path_type=Path),
+    "--output-dir",
+    "output_dir",
+    type=click.Path(file_okay=False, path_type=Path),
     default=None,
-    help="Optional override for final output path.",
-)
-@click.option(
-    "--readable-output",
-    type=click.Path(dir_okay=False, path_type=Path),
-    default=None,
-    help="Optional override for readable text output path.",
+    help="Optional override for output directory (files are auto-named inside).",
 )
 @click.option(
     "--threshold",
@@ -163,8 +157,7 @@ def batch_submit(manifest: Path, batch_input: Path | None) -> None:
 )
 def fetch_batch(
     manifest: Path,
-    output_path: Path | None,
-    readable_output: Path | None,
+    output_dir: Path | None,
     threshold: int | None,
     append: bool,
 ) -> None:
@@ -221,15 +214,18 @@ def fetch_batch(
     requests = manifest_obj.get("requests", [])
     requests_by_id = {req["custom_id"]: req for req in requests}
 
+    effective_dir = output_dir or Path(manifest_obj["final_output_dir"])
+    effective_dir.mkdir(parents=True, exist_ok=True)
+
     if task == "questions":
         _process_questions_batch(
-            output_lines, requests_by_id, manifest_obj, output_path, readable_output, append,
+            output_lines, requests_by_id, manifest_obj, effective_dir, append,
         )
     elif task == "evaluate":
         effective_threshold = threshold or manifest_obj.get("threshold", DEFAULT_THRESHOLD)
         _process_evaluate_batch(
             output_lines, requests_by_id, manifest_obj, effective_threshold,
-            output_path, readable_output, append,
+            effective_dir, append,
         )
 
     # Process error file if present.
@@ -271,13 +267,12 @@ def _process_questions_batch(
     output_lines: list[dict[str, Any]],
     requests_by_id: dict[str, dict],
     manifest_obj: dict[str, Any],
-    output_path: Path | None,
-    readable_output: Path | None,
+    output_dir: Path,
     append: bool,
 ) -> None:
     """Process batch output for task=questions."""
-    final_output_path = output_path or Path(manifest_obj["final_output_file"])
-    final_readable_path = readable_output or Path(manifest_obj["final_readable_file"])
+    final_output_path = output_dir / "questions.jsonl"
+    final_readable_path = output_dir / "questions.txt"
 
     if not append:
         final_output_path.write_text("", encoding="utf-8")
@@ -337,14 +332,13 @@ def _process_evaluate_batch(
     requests_by_id: dict[str, dict],
     manifest_obj: dict[str, Any],
     threshold: int,
-    output_path: Path | None,
-    readable_output: Path | None,
+    output_dir: Path,
     append: bool,
 ) -> None:
     """Process batch output for task=evaluate."""
-    final_sft_path = output_path or Path(manifest_obj["final_sft_file"])
-    final_dpo_path = Path(manifest_obj["final_dpo_file"])
-    final_readable_path = readable_output or Path(manifest_obj["final_readable_file"])
+    final_sft_path = output_dir / "sft_training_data.jsonl"
+    final_dpo_path = output_dir / "dpo_training_data.jsonl"
+    final_readable_path = output_dir / "evaluation.txt"
 
     if not append:
         final_sft_path.write_text("", encoding="utf-8")

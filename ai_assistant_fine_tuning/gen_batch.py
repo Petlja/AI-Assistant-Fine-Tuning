@@ -20,11 +20,8 @@ from ai_assistant_fine_tuning.batch_util import (
 )
 from ai_assistant_fine_tuning.core import (
     DEFAULT_ANSWERS_OUTPUT_FILE,
-    DEFAULT_DPO_OUTPUT_FILE,
     DEFAULT_INPUT_DIR,
     DEFAULT_MODEL,
-    DEFAULT_QUESTIONS_OUTPUT_FILE,
-    DEFAULT_SFT_OUTPUT_FILE,
     DEFAULT_THRESHOLD,
     EVALUATION_PROMPT,
     TASK_CONFIG,
@@ -71,11 +68,11 @@ def _append_jsonl_line(path: Path, record: dict[str, Any]) -> None:
     help="Answers JSONL from gen-answers (required for task=evaluate).",
 )
 @click.option(
-    "--output",
+    "--output-dir",
     "-o",
-    type=click.Path(dir_okay=False, path_type=Path),
+    type=click.Path(file_okay=False, path_type=Path),
     default=None,
-    help="Final output JSONL path (default depends on task).",
+    help="Output directory for generated files (default depends on task).",
 )
 @click.option(
     "--model",
@@ -114,7 +111,7 @@ def gen_batch(
     task: str,
     input_dir: Path,
     answers: Path | None,
-    output: Path | None,
+    output_dir: Path | None,
     model: str,
     threshold: int,
     batch_input: Path | None,
@@ -132,7 +129,7 @@ def gen_batch(
     After running this, submit with 'astft batch-submit'.
     """
     if task == "questions":
-        _gen_batch_questions(input_dir, output, model, batch_input, manifest, max_batch_size)
+        _gen_batch_questions(input_dir, output_dir, model, batch_input, manifest, max_batch_size)
     elif task == "evaluate":
         if answers is None:
             answers = Path(DEFAULT_ANSWERS_OUTPUT_FILE)
@@ -141,19 +138,20 @@ def gen_batch(
                     "No --answers file provided and default answers.jsonl not found. "
                     "Run gen-answers first."
                 )
-        _gen_batch_evaluate(answers, output, model, threshold, batch_input, manifest, max_batch_size)
+        _gen_batch_evaluate(answers, output_dir, model, threshold, batch_input, manifest, max_batch_size)
 
 
 def _gen_batch_questions(
     input_dir: Path,
-    output: Path | None,
+    output_dir: Path | None,
     model: str,
     batch_input: Path | None,
     manifest: Path | None,
     max_batch_size: int,
 ) -> None:
-    default_output = Path(DEFAULT_QUESTIONS_OUTPUT_FILE)
-    output = output or default_output
+    default_dir = Path(".")  # current directory
+    output_dir = output_dir or default_dir
+    output_dir.mkdir(parents=True, exist_ok=True)
 
     sources = collect_markdown_sources(input_dir)
     if not sources:
@@ -165,8 +163,8 @@ def _gen_batch_questions(
     click.echo(f"Teacher model: {model}")
 
     cfg = TASK_CONFIG["questions"]
-    base_batch_input = batch_input or output.with_suffix(".batch.input.jsonl")
-    base_manifest = manifest or output.with_suffix(".batch.manifest.json")
+    base_batch_input = batch_input or output_dir / "questions.batch.input.jsonl"
+    base_manifest = manifest or output_dir / "questions.batch.manifest.json"
 
     base_batch_input.parent.mkdir(parents=True, exist_ok=True)
     base_manifest.parent.mkdir(parents=True, exist_ok=True)
@@ -228,8 +226,7 @@ def _gen_batch_questions(
                 "model": model,
                 "input_dir": str(input_dir),
                 "batch_input_file": str(chunk_input),
-                "final_output_file": str(output),
-                "final_readable_file": str(output.with_suffix(".txt")),
+                "final_output_dir": str(output_dir),
                 "created_at": utc_now_iso(),
                 "batch": {
                     "id": None,
@@ -253,23 +250,24 @@ def _gen_batch_questions(
 
 def _gen_batch_evaluate(
     answers_path: Path,
-    output: Path | None,
+    output_dir: Path | None,
     model: str,
     threshold: int,
     batch_input: Path | None,
     manifest: Path | None,
     max_batch_size: int,
 ) -> None:
-    default_output = Path(DEFAULT_SFT_OUTPUT_FILE)
-    output = output or default_output
+    default_dir = Path(".")  # current directory
+    output_dir = output_dir or default_dir
+    output_dir.mkdir(parents=True, exist_ok=True)
 
     click.echo(f"Task: evaluate")
     click.echo(f"Teacher model: {model}")
     click.echo(f"Threshold: {threshold}/10")
 
     cfg = TASK_CONFIG["evaluate"]
-    base_batch_input = batch_input or output.with_suffix(".batch.input.jsonl")
-    base_manifest = manifest or output.with_suffix(".batch.manifest.json")
+    base_batch_input = batch_input or output_dir / "training_data.batch.input.jsonl"
+    base_manifest = manifest or output_dir / "training_data.batch.manifest.json"
 
     base_batch_input.parent.mkdir(parents=True, exist_ok=True)
     base_manifest.parent.mkdir(parents=True, exist_ok=True)
@@ -354,9 +352,7 @@ def _gen_batch_evaluate(
                 "answers_file": str(answers_path),
                 "threshold": threshold,
                 "batch_input_file": str(chunk_input),
-                "final_sft_file": str(output),
-                "final_dpo_file": str(Path(DEFAULT_DPO_OUTPUT_FILE)),
-                "final_readable_file": str(output.with_name("evaluation.txt")),
+                "final_output_dir": str(output_dir),
                 "created_at": utc_now_iso(),
                 "batch": {
                     "id": None,
