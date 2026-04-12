@@ -331,11 +331,21 @@ def route_evaluation(
         }
         return sft_record, None
     else:
+        def normalize(s):
+            return (
+                s.replace("\r\n", "\n")
+                .replace("\xa0", " ")
+                .strip()
+            )
+
+        SEP = "\n\n"
+
         dpo_record = {
-            "prompt": f"{system_message}\n\n{question}",
-            "chosen": evaluation.improved_answer,
-            "rejected": answer,
+            "prompt": normalize(system_message) + SEP + normalize(question) + SEP,
+            "chosen": normalize(evaluation.improved_answer),
+            "rejected": normalize(answer),
         }
+
         return None, dpo_record
 
 
