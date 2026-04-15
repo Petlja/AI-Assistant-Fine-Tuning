@@ -5,8 +5,13 @@ import logging
 import click
 from dotenv import load_dotenv
 
-from ai_assistant_fine_tuning.finetune import finetune
-from ai_assistant_fine_tuning.gentd import gentd
+from ai_assistant_fine_tuning.batch import batch_submit, fetch_batch
+from ai_assistant_fine_tuning.finetune_dpo import dpo_finetune
+from ai_assistant_fine_tuning.gen_td import gen_td
+from ai_assistant_fine_tuning.gen_answers import gen_answers
+from ai_assistant_fine_tuning.gen_batch import gen_batch
+from ai_assistant_fine_tuning.gen_questions import gen_questions
+from ai_assistant_fine_tuning.finetune_sft import sft_finetune
 
 
 @click.group()
@@ -19,9 +24,17 @@ def cli() -> None:
         format="%(asctime)s %(levelname)s %(message)s",
     )
 
-
-cli.add_command(gentd)
-cli.add_command(finetune)
+# 3-step training data pipeline (sync)
+cli.add_command(gen_questions)    # Step 1: teacher generates questions
+cli.add_command(gen_answers)      # Step 2: local model answers questions
+cli.add_command(gen_td)           # Step 3: teacher scores & routes to SFT/DPO
+# Batch API support for Steps 1 and 3
+cli.add_command(gen_batch)
+cli.add_command(batch_submit)
+cli.add_command(fetch_batch)
+# Finetuning commands
+cli.add_command(sft_finetune)
+cli.add_command(dpo_finetune)
 
 
 if __name__ == "__main__":
