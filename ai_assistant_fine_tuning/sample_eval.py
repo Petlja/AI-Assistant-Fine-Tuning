@@ -298,7 +298,6 @@ def _write_yaml(sample: dict[str, Any], sample_id: int, output_path: Path) -> No
     yaml_data = {
         "sample_id": sample_id,
         "source": sample["source"],
-        "category": sample["category"],
         "system_message": sample["system_message"],
         "question": sample["question"],
         "answer": sample["answer"],
@@ -414,8 +413,7 @@ def _write_html(sample: dict[str, Any], sample_id: int, output_path: Path) -> No
     <h1>Sample {sample_id:03d}</h1>
     
     <div class="metadata">
-        <strong>Source:</strong> {sample["source"]}<br>
-        <strong>Category:</strong> {sample["category"]}
+        <strong>Source:</strong> {sample["source"]}
     </div>
     
     <div class="section">
