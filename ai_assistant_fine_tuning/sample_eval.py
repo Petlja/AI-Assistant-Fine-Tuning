@@ -1,5 +1,6 @@
 """Sample questions for human evaluation validation."""
 
+import json
 import logging
 import random
 from collections import defaultdict
@@ -33,6 +34,18 @@ logger = logging.getLogger(__name__)
     type=click.Path(exists=True, dir_okay=False, path_type=Path),
     required=True,
     help="Path to answers.jsonl (from gen-answers) to get original learner answers.",
+)
+@click.option(
+    "--scores",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    required=False,
+    help="Path to scores.jsonl (from gen-td --scores-output) to include scores in output.",
+)
+@click.option(
+    "--manifest",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    required=False,
+    help="Path to batch manifest JSON (from fetch-batch) to extract scores from requests array.",
 )
 @click.option(
     "--sample-size",
@@ -71,6 +84,8 @@ def sample_eval(
     sft_data: Path,
     dpo_data: Path | None,
     answers: Path,
+    scores: Path | None,
+    manifest: Path | None,
     sample_size: int,
     sft_sample_size: int | None,
     dpo_sample_size: int | None,
@@ -97,6 +112,34 @@ def sample_eval(
     answer_lookup = {rec["question"]: rec for rec in answer_records}
     click.echo(f"Loaded {len(answer_lookup)} unique questions from answers")
     
+    # Load scores from either scores.jsonl or manifest
+    score_lookup = {}
+    if scores and manifest:
+        click.echo("Warning: Both --scores and --manifest provided. Using --manifest.")
+        
+    if manifest:
+        click.echo(f"Loading scores from manifest {manifest}")
+        with open(manifest, "r", encoding="utf-8") as f:
+            manifest_data = json.load(f)
+        
+        # Extract scores from requests array
+        requests = manifest_data.get("requests", [])
+        for req in requests:
+            if req.get("status") == "succeeded" and "score" in req:
+                question = req.get("question", "")
+                score_lookup[question] = {
+                    "score": req["score"],
+                    "routed_to": req.get("routed_to", "unknown"),
+                    "source": req.get("source", "unknown"),
+                }
+        click.echo(f"Loaded {len(score_lookup)} scores from manifest")
+        
+    elif scores:
+        click.echo(f"Loading scores from {scores}")
+        score_records = read_jsonl(scores)
+        score_lookup = {rec["question"]: rec for rec in score_records}
+        click.echo(f"Loaded {len(score_lookup)} scores")
+    
     # Load and sample SFT data
     click.echo(f"\nLoading SFT data from {sft_data}")
     sft_records = read_jsonl(sft_data)
@@ -120,6 +163,16 @@ def sample_eval(
     if not all_samples:
         click.echo("No samples generated. Exiting.")
         raise SystemExit(1)
+    
+    # Add scores to samples if available
+    for sample in all_samples:
+        if sample["question"] in score_lookup:
+            score_rec = score_lookup[sample["question"]]
+            sample["score"] = score_rec["score"]
+            sample["routed_to"] = score_rec["routed_to"]
+        else:
+            sample["score"] = None
+            sample["routed_to"] = None
     
     # Create output directories
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -152,6 +205,12 @@ def sample_eval(
     # Generate index.html (in root)
     index_path = output_dir / "index.html"
     _write_index(index_data, index_path)
+    
+    # Generate scores.yaml if scores were loaded
+    if score_lookup:
+        scores_yaml_path = output_dir / "scores.yaml"
+        _write_scores_yaml(all_samples, scores_yaml_path)
+        click.echo(f"  - Scores: {scores_yaml_path}")
     
     click.echo(f"\n✓ Done! Generated {len(all_samples)} samples")
     click.echo(f"  - SFT: {len(sft_samples)}")
@@ -515,3 +574,28 @@ def _write_index(index_data: list[dict], output_path: Path) -> None:
 """
     
     output_path.write_text(html_content, encoding="utf-8")
+
+
+def _write_scores_yaml(samples: list[dict[str, Any]], output_path: Path) -> None:
+    """Write scores.yaml with teacher model scores for sampled questions."""
+    scores_data = []
+    
+    for i, sample in enumerate(samples, 1):
+        score_entry = {
+            "sample_id": i,
+            "source": sample["source"],
+            "category": sample["category"],
+            "question": sample["question"],
+            "teacher_score": sample.get("score"),
+            "routed_to": sample.get("routed_to"),
+        }
+        scores_data.append(score_entry)
+    
+    with open(output_path, "w", encoding="utf-8") as f:
+        yaml.dump(
+            scores_data,
+            f,
+            allow_unicode=True,
+            default_flow_style=False,
+            sort_keys=False,
+        )

@@ -82,7 +82,16 @@ The pipeline consists of **7 CLI commands** (via `astft` entrypoint, defined in 
     }
     ```
   - `evaluation.txt` — Statistics (scores, splits, etc.)
-- **Options:** `--model`, `--threshold` (default: 7, range 1-10), `--sft-output`, `--dpo-output`, `--append/--overwrite`
+  - `scores.jsonl` (optional, use `--scores-output`) — Scores for each question, used by sample-eval
+    ```json
+    {
+      "source": "path/to/file.md",
+      "question": "Q",
+      "score": 7,
+      "routed_to": "SFT"
+    }
+    ```
+- **Options:** `--model`, `--threshold` (default: 7, range 1-10), `--sft-output`, `--dpo-output`, `--scores-output`, `--append/--overwrite`
 - **Key File:** [gen_td.py](ai_assistant_fine_tuning/gen_td.py)
 
 ---
@@ -159,6 +168,58 @@ When processing **large datasets** (100k+ questions), use the Batch API for cost
 - **Output:**
   - Model checkpoint in `--output-dir` (default: `finetune-output/t7-dpo/`)
 - **Key File:** [finetune_dpo.py](ai_assistant_fine_tuning/finetune_dpo.py)
+
+---
+
+### **HUMAN EVALUATION**
+
+#### **sample-eval**
+- **Purpose:** Sample questions from training data for human evaluation and comparison
+- **Input:**
+  - `--sft-data FILE` (required) — SFT training data JSONL
+  - `--dpo-data FILE` (optional) — DPO training data JSONL
+  - `--answers FILE` (required) — Original answers from gen-answers
+  - **Scores (choose one):**
+    - `--scores FILE` — Scores JSONL from gen-td (sync path: `--scores-output`)
+    - `--manifest FILE` — Batch manifest JSON (batch path: extracts scores from `requests` array)
+- **Output:**
+  - `sample_NNN.yaml` — YAML files for each sample (with human_score placeholders)
+  - `html/sample_NNN.html` — HTML files for easy viewing
+  - `index.html` — Index page with links to all samples
+  - `scores.yaml` — Teacher model scores for all sampled questions (for comparison with human eval)
+    ```yaml
+    - sample_id: 1
+      source: "path/to/file.md"
+      category: "SFT"
+      question: "Question text..."
+      teacher_score: 7
+      routed_to: "SFT"
+    ```
+- **Options:** 
+  - `--sample-size N` (default: 10) — Number of samples per dataset
+  - `--sft-sample-size N` — Override for SFT
+  - `--dpo-sample-size N` — Override for DPO
+  - `--seed N` (default: 42) — Random seed for reproducibility
+  - `--output-dir PATH` (default: `human_eval/`)
+- **Key File:** [sample_eval.py](ai_assistant_fine_tuning/sample_eval.py)
+- **Usage Examples:**
+  ```bash
+  # Sync path: with scores.jsonl
+  astft sample-eval \
+    --sft-data training_data.jsonl \
+    --dpo-data training_data_dpo.jsonl \
+    --answers answers.jsonl \
+    --scores scores.jsonl \
+    --sample-size 20
+  
+  # Batch path: with manifest
+  astft sample-eval \
+    --sft-data finetunedata/training_data/t7/sft_training_data.jsonl \
+    --dpo-data finetunedata/training_data/t7/dpo_training_data.jsonl \
+    --answers finetunedata/answers/answers.jsonl \
+    --manifest finetunedata/evaluate_batch/training_data.batch.manifest.json \
+    --sample-size 20
+  ```
 
 ---
 
@@ -279,6 +340,7 @@ astft fetch-batch --manifest finetunedata/evaluate_batch/training_data.batch.man
 - **[batch.py](ai_assistant_fine_tuning/batch.py)** — Batch API submission/polling (Steps 2b/3b)
 - **[batch_util.py](ai_assistant_fine_tuning/batch_util.py)** — Batch helpers (JSONL I/O, manifest schema)
 - **[core.py](ai_assistant_fine_tuning/core.py)** — Shared logic (LLM calls, markdown collection, evaluation)
+- **[sample_eval.py](ai_assistant_fine_tuning/sample_eval.py)** — Human evaluation sample generation
 - **[finetune_sft.py](ai_assistant_fine_tuning/finetune_sft.py)** — SFT fine-tuning (Hugging Face Trainer)
 - **[finetune_dpo.py](ai_assistant_fine_tuning/finetune_dpo.py)** — DPO fine-tuning (TRL)
 
