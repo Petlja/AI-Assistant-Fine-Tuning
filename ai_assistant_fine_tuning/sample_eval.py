@@ -456,7 +456,6 @@ def _write_index(index_data: list[dict], output_path: Path) -> None:
         <tr>
             <td>{item["id"]}</td>
             <td>{source}</td>
-            <td>{item["category"]}</td>
             <td>
                 <a href="{item["html"]}">View HTML</a> |
                 <a href="{item["yaml"]}">View YAML</a>
@@ -541,9 +540,7 @@ def _write_index(index_data: list[dict], output_path: Path) -> None:
     <h1>Human Evaluation Samples</h1>
     
     <div class="summary">
-        <strong>Total Samples:</strong> {len(index_data)}<br>
-        <strong>SFT Samples:</strong> {sum(1 for x in index_data if x["category"] == "SFT")}<br>
-        <strong>DPO Samples:</strong> {sum(1 for x in index_data if x["category"] == "DPO")}
+        <strong>Total Samples:</strong> {len(index_data)}
     </div>
     
     <table>
@@ -551,7 +548,6 @@ def _write_index(index_data: list[dict], output_path: Path) -> None:
             <tr>
                 <th style="width: 60px;">ID</th>
                 <th>Source</th>
-                <th style="width: 100px;">Category</th>
                 <th style="width: 180px;">Links</th>
             </tr>
         </thead>
