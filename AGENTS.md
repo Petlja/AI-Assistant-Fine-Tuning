@@ -287,6 +287,45 @@ astft fetch-batch --manifest finetunedata/evaluate_batch/training_data.batch.man
 - Evaluation threshold: 1–10 (default: 7), lower scores go to DPO
 - Batch manifest schema version: 1.0 (for tracking batch state)
 
+### Virtual Environment Setup
+
+**IMPORTANT:** The virtual environment has special path considerations:
+
+1. **Location:** The `.venv` directory is located at the project root, but the actual Python environment may be symlinked to `/datadisk/projects/AI-Assistant-Fine-Tuning/.venv/`
+
+2. **Running Commands:**
+   - **Always activate the venv first:** `source .venv/bin/activate`
+   - After activation, use commands directly: `astft`, `python`, etc.
+   - If pip is not available, install it: `python -m ensurepip --upgrade`
+   - Then use: `python -m pip` for package management
+
+3. **Common Issues:**
+   - **Direct pip calls fail:** `.venv/bin/pip` may not exist initially
+   - **Solution:** Use `python -m pip` after activating the venv
+   - **Path confusion:** The workspace at `/home/azureuser/projects/` is actually symlinked to `/datadisk/projects/`
+   - Activation handles this automatically, so always use `source .venv/bin/activate`
+
+4. **Dependency Management:**
+   - Project uses `pyproject.toml` for dependency specification
+   - If you encounter dependency warnings (e.g., urllib3/requests compatibility):
+     - Ensure pip is available: `python -m ensurepip --upgrade`
+     - Upgrade problematic packages: `python -m pip install --upgrade <package>`
+
+5. **Example Session:**
+   ```bash
+   # Activate venv (handles path symlinks automatically)
+   source .venv/bin/activate
+   
+   # Ensure pip is available (if needed)
+   python -m ensurepip --upgrade
+   
+   # Install/upgrade packages
+   python -m pip install --upgrade requests
+   
+   # Run commands (astft is now in PATH)
+   astft sample-eval --sft-data ... --dpo-data ...
+   ```
+
 ### Error Handling & Retry
 - Uses `tenacity` for retries on transient OpenAI API failures
 - Manifest updates preserve batch_id and status across invocations
