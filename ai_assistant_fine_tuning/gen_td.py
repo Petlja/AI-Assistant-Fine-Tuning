@@ -12,10 +12,13 @@ from ai_assistant_fine_tuning.core import (
     DEFAULT_DPO_OUTPUT_FILE,
     DEFAULT_MODEL,
     DEFAULT_SFT_OUTPUT_FILE,
-    DEFAULT_THRESHOLD,
-    evaluate_answer,
     route_evaluation,
     write_readable_evaluation,
+)
+from ai_assistant_fine_tuning.scoring import (
+    DEFAULT_THRESHOLD,
+    get_scorer,
+    score_answer,
 )
 
 logger = logging.getLogger(__name__)
@@ -89,6 +92,7 @@ def gen_td(
     click.echo(f"Threshold: {threshold}/100 (>= SFT, < DPO)")
 
     client = OpenAI()
+    scorer = get_scorer(model=model)
 
     sft_records: list[dict] = []
     dpo_records: list[dict] = []
@@ -107,14 +111,20 @@ def gen_td(
         click.echo(f"[{i}/{len(answer_records)}] Evaluating ({source}) ... ", nl=False)
 
         try:
-            result = evaluate_answer(client, system_message, question, answer, model)
+            result = score_answer(
+                client,
+                system_message=system_message,
+                question=question,
+                answer=answer,
+                config=scorer,
+            )
 
             sft_rec, dpo_rec = route_evaluation(
                 system_message, question, answer, result, threshold,
             )
 
             routed_to = "SFT" if sft_rec else "DPO"
-            click.echo(f"score={result.score} → {routed_to}")
+            click.echo(f"score={result.score}/{result.scale_max} → {routed_to}")
 
             if sft_rec:
                 sft_records.append(sft_rec)

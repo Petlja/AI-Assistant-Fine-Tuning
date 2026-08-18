@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from openai import OpenAI
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 
 from plct_ai_data_unifier.metadata_model import (
@@ -25,6 +25,25 @@ from plct_ai_data_unifier.metadata_model import (
     PlctSegmentEnum,
     UdBook,
     UdSegment,
+)
+
+# The scoring concern lives in its own leaf module so AI-Assistant-LLM-Compare
+# can import it without the training stack; see scoring.py's docstring. These
+# re-exports keep existing `from ...core import X` call sites working.
+# The dependency runs one way only: scoring.py must never import core.
+from ai_assistant_fine_tuning.scoring import (  # noqa: F401
+    DEFAULT_THRESHOLD,
+    EVALUATION_BATCH_SYSTEM_MESSAGE,
+    EVALUATION_PROMPT,
+    EVALUATION_SYSTEM_MESSAGE,
+    EvaluationResult,
+    Score,
+    ScorerConfig,
+    build_scoring_messages,
+    evaluate_answer,
+    get_scorer,
+    score_answer,
+    transform_evaluate_batch,
 )
 
 # ---------------------------------------------------------------------------
@@ -40,7 +59,6 @@ DEFAULT_MODEL = "gpt-5.4-mini"
 DEFAULT_LOCAL_MODEL = "Qwen/Qwen3-14B"
 DEFAULT_VLLM_BASE_URL = "http://localhost:8000/v1"
 DEFAULT_VLLM_API_KEY = "EMPTY"
-DEFAULT_THRESHOLD = 70
 
 DEFAULT_SYSTEM_PROMPT = (
     "You are an AI teaching assistant on the LMS platform. "
@@ -102,56 +120,6 @@ pedagogical strategy, practical classroom use.
 --- END MATERIAL ---
 """
 
-EVALUATION_PROMPT = """\
-You are evaluating an answer produced by an AI teaching assistant deployed on \
-the LMS platform.  In production, this assistant receives course/lesson \
-summaries and RAG-retrieved content chunks as context, then answers teacher \
-questions via chat in Markdown format.
-
-The assistant should give accurate, concise, and practically useful answers \
-grounded in the course material.  If the assistant is unsure, it should say so \
-rather than guessing.  Answers must be in the same language as the question.
-
-Context (system message that was given to the answering assistant):
-{system_message}
-
-Question the teacher asked:
-{question}
-
-Assistant's answer:
-{answer}
-
-Score the answer on a scale from 1 to 100.  Use the full range — a generic \
-paragraph and a detailed, well-structured answer with examples should NOT get \
-similar scores.
-
-Score anchors:
-- 1-25: Poor — incorrect, off-topic, could mislead a teacher or student, or \
-ignores the course context entirely.
-- 26-50: Below average — partially correct but with significant gaps, \
-inaccuracies, or generic advice that is not grounded in this course's subject.
-- 51-70: Adequate — addresses the question reasonably but lacks depth, \
-concrete examples, or polish; a teacher could use it but would have to fill in gaps.
-- 71-85: Good — accurate, relevant and well-structured, directly usable for \
-lesson preparation, with only minor issues.
-- 86-100: Excellent — accurate, comprehensive, cleanly formatted, precisely \
-scoped to the course subject, and immediately useful for lesson preparation.
-
-Key evaluation criteria:
-- Is the answer faithful to the specific course subject? (e.g. C-specific if \
-the course is about C, not generic programming advice)
-- Would a teacher find this answer practically useful for lesson prep?
-- Is it concise without sacrificing important details?
-- Is it formatted cleanly in Markdown?
-- Does it admit uncertainty rather than hallucinating when appropriate?
-- For pedagogical questions: does it offer concrete strategies a teacher can \
-actually use in a classroom?
-
-Then provide an **improved_answer** that would score 90-100.  The improved answer \
-must be written as if the AI assistant is directly responding to the teacher — \
-in the same language as the question, formatted in Markdown.
-"""
-
 # Task-specific config used by both sync and batch paths.
 TASK_CONFIG = {
     "questions": {
@@ -163,12 +131,11 @@ TASK_CONFIG = {
         ),
         "generation_prompt": QUESTION_GENERATION_PROMPT,
     },
+    # Sourced from scoring.py so the batch path and the sync path can never
+    # drift onto different prompts.
     "evaluate": {
-        "system_message": "You evaluate and improve answers from an AI teaching assistant on the Petlja LMS platform that helps teachers prepare lessons for online courses.",
-        "batch_system_message": (
-            "You evaluate and improve answers from an AI teaching assistant. "
-            "Return ONLY a valid JSON object with 'score' and 'improved_answer' keys."
-        ),
+        "system_message": EVALUATION_SYSTEM_MESSAGE,
+        "batch_system_message": EVALUATION_BATCH_SYSTEM_MESSAGE,
         "generation_prompt": EVALUATION_PROMPT,
     },
 }
@@ -183,14 +150,6 @@ class QuestionList(BaseModel):
 
     system_message: str
     questions: list[str]
-
-
-class EvaluationResult(BaseModel):
-    """Output of Step 3: teacher's score and improved answer for one Q/A."""
-
-    score: int = Field(ge=1, le=100)
-    improved_answer: str
-
 
 
 _CONTENT_SOURCE_TYPES = {PetljaActivityEnum.READING.value, PlctSegmentEnum.ACTIVITY.value}
@@ -286,33 +245,6 @@ def generate_questions(client: OpenAI, content: str, model: str) -> QuestionList
     return response.choices[0].message.parsed
 
 
-def evaluate_answer(
-    client: OpenAI,
-    system_message: str,
-    question: str,
-    answer: str,
-    model: str,
-) -> EvaluationResult:
-    """Call the teacher model to score an answer and provide an improved version."""
-    response = client.beta.chat.completions.parse(
-        model=model,
-        messages=[
-            {"role": "system", "content": TASK_CONFIG["evaluate"]["system_message"]},
-            {
-                "role": "user",
-                "content": EVALUATION_PROMPT.format(
-                    system_message=system_message,
-                    question=question,
-                    answer=answer,
-                ),
-            },
-        ],
-        response_format=EvaluationResult,
-        temperature=0.3,
-    )
-    return response.choices[0].message.parsed
-
-
 # ---------------------------------------------------------------------------
 # Routing: evaluation result -> SFT or DPO record
 # ---------------------------------------------------------------------------
@@ -322,7 +254,7 @@ def route_evaluation(
     system_message: str,
     question: str,
     answer: str,
-    evaluation: EvaluationResult,
+    evaluation: EvaluationResult | Score,
     threshold: int,
 ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
     """Route a single evaluation into an SFT record, a DPO record, or neither.
@@ -380,21 +312,6 @@ def transform_questions_batch(json_obj: dict[str, Any]) -> tuple[str, list[str]]
         raise ValueError("Questions batch output had no valid question strings")
 
     return system_message, valid
-
-
-def transform_evaluate_batch(
-    json_obj: dict[str, Any],
-) -> EvaluationResult:
-    """Transform raw batch JSON into an EvaluationResult."""
-    score = json_obj.get("score")
-    improved_answer = json_obj.get("improved_answer")
-
-    if not isinstance(score, int) or not (1 <= score <= 100):
-        raise ValueError(f"Invalid score in evaluate batch output: {score}")
-    if not isinstance(improved_answer, str) or not improved_answer.strip():
-        raise ValueError("Missing improved_answer in evaluate batch output")
-
-    return EvaluationResult(score=score, improved_answer=improved_answer)
 
 
 # ---------------------------------------------------------------------------
