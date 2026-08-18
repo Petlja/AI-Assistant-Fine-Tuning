@@ -3,7 +3,7 @@
 Step 1 – Question generation:  teacher model reads lecture markdown and produces
          a context-aware system message + list of questions.
 Step 2 – Answer generation:    local vLLM model answers those questions.
-Step 3 – Evaluation & routing: teacher model scores each answer 1-10,
+Step 3 – Evaluation & routing: teacher model scores each answer 1-100,
          produces an improved version, and the caller routes results into
          SFT (score >= threshold) or DPO (score < threshold) training data.
 
@@ -40,7 +40,7 @@ DEFAULT_MODEL = "gpt-5.4-mini"
 DEFAULT_LOCAL_MODEL = "Qwen/Qwen3-14B"
 DEFAULT_VLLM_BASE_URL = "http://localhost:8000/v1"
 DEFAULT_VLLM_API_KEY = "EMPTY"
-DEFAULT_THRESHOLD = 7
+DEFAULT_THRESHOLD = 70
 
 DEFAULT_SYSTEM_PROMPT = (
     "You are an AI teaching assistant on the LMS platform. "
@@ -121,13 +121,21 @@ Question the teacher asked:
 Assistant's answer:
 {answer}
 
-Score the answer on a scale from 1 to 10:
-- 1-3: incorrect, irrelevant, or could mislead a teacher/student
-- 4-6: partially correct but missing important details, vague, or slightly \
-inaccurate for the course context
-- 7-8: mostly correct and useful, minor issues or could be more concise
-- 9-10: excellent — accurate, well-structured, appropriate for the course \
-context, and directly useful for lesson preparation
+Score the answer on a scale from 1 to 100.  Use the full range — a generic \
+paragraph and a detailed, well-structured answer with examples should NOT get \
+similar scores.
+
+Score anchors:
+- 1-25: Poor — incorrect, off-topic, could mislead a teacher or student, or \
+ignores the course context entirely.
+- 26-50: Below average — partially correct but with significant gaps, \
+inaccuracies, or generic advice that is not grounded in this course's subject.
+- 51-70: Adequate — addresses the question reasonably but lacks depth, \
+concrete examples, or polish; a teacher could use it but would have to fill in gaps.
+- 71-85: Good — accurate, relevant and well-structured, directly usable for \
+lesson preparation, with only minor issues.
+- 86-100: Excellent — accurate, comprehensive, cleanly formatted, precisely \
+scoped to the course subject, and immediately useful for lesson preparation.
 
 Key evaluation criteria:
 - Is the answer faithful to the specific course subject? (e.g. C-specific if \
@@ -139,7 +147,7 @@ the course is about C, not generic programming advice)
 - For pedagogical questions: does it offer concrete strategies a teacher can \
 actually use in a classroom?
 
-Then provide an **improved_answer** that would score 9-10.  The improved answer \
+Then provide an **improved_answer** that would score 90-100.  The improved answer \
 must be written as if the AI assistant is directly responding to the teacher — \
 in the same language as the question, formatted in Markdown.
 """
@@ -180,7 +188,7 @@ class QuestionList(BaseModel):
 class EvaluationResult(BaseModel):
     """Output of Step 3: teacher's score and improved answer for one Q/A."""
 
-    score: int = Field(ge=1, le=10)
+    score: int = Field(ge=1, le=100)
     improved_answer: str
 
 
@@ -381,7 +389,7 @@ def transform_evaluate_batch(
     score = json_obj.get("score")
     improved_answer = json_obj.get("improved_answer")
 
-    if not isinstance(score, int) or not (1 <= score <= 10):
+    if not isinstance(score, int) or not (1 <= score <= 100):
         raise ValueError(f"Invalid score in evaluate batch output: {score}")
     if not isinstance(improved_answer, str) or not improved_answer.strip():
         raise ValueError("Missing improved_answer in evaluate batch output")
@@ -454,7 +462,7 @@ def write_readable_evaluation(
                 current_source = source
             f.write(f"Q: {item['question']}\n")
             f.write(f"A: {item['answer']}\n")
-            f.write(f"Score: {item['score']}/10 -> {item['routed_to']}\n")
+            f.write(f"Score: {item['score']}/100 -> {item['routed_to']}\n")
             if item["routed_to"] == "DPO":
                 f.write(f"Improved: {item['improved_answer']}\n")
             f.write("\n")

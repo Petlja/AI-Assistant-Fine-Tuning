@@ -145,7 +145,7 @@ def batch_submit(manifest: Path, batch_input: Path | None) -> None:
 )
 @click.option(
     "--threshold",
-    type=click.IntRange(1, 10),
+    type=click.IntRange(1, 100),
     default=None,
     help="Score threshold for evaluate task (overrides manifest value).",
 )

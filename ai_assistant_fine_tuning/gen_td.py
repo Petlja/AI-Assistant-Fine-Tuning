@@ -52,10 +52,10 @@ logger = logging.getLogger(__name__)
 )
 @click.option(
     "--threshold",
-    type=click.IntRange(1, 10),
+    type=click.IntRange(1, 100),
     default=DEFAULT_THRESHOLD,
     show_default=True,
-    help="Minimum score (1-10) for an answer to be routed to SFT. Below → DPO.",
+    help="Minimum score (1-100) for an answer to be routed to SFT. Below → DPO.",
 )
 @click.option(
     "--append/--overwrite",
@@ -74,7 +74,7 @@ def gen_td(
     """Evaluate answers using a teacher model and route to SFT or DPO.
 
     Reads answers JSONL (from gen-answers), asks the teacher model to
-    score each answer (1-10) and provide an improved version.
+    score each answer (1-100) and provide an improved version.
 
     - Score >= threshold  →  SFT record (system/user/assistant)
     - Score < threshold   →  DPO record (prompt, chosen=improved, rejected=original)
@@ -86,7 +86,7 @@ def gen_td(
 
     click.echo(f"Loaded {len(answer_records)} answer(s) to evaluate")
     click.echo(f"Teacher model: {model}")
-    click.echo(f"Threshold: {threshold}/10 (>= SFT, < DPO)")
+    click.echo(f"Threshold: {threshold}/100 (>= SFT, < DPO)")
 
     client = OpenAI()
 

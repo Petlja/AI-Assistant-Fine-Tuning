@@ -83,7 +83,7 @@ def _append_jsonl_line(path: Path, record: dict[str, Any]) -> None:
 )
 @click.option(
     "--threshold",
-    type=click.IntRange(1, 10),
+    type=click.IntRange(1, 100),
     default=DEFAULT_THRESHOLD,
     show_default=True,
     help="Score threshold for SFT/DPO routing (stored in manifest, used by fetch-batch).",
@@ -263,7 +263,7 @@ def _gen_batch_evaluate(
 
     click.echo(f"Task: evaluate")
     click.echo(f"Teacher model: {model}")
-    click.echo(f"Threshold: {threshold}/10")
+    click.echo(f"Threshold: {threshold}/100")
 
     cfg = TASK_CONFIG["evaluate"]
     base_batch_input = batch_input or output_dir / "training_data.batch.input.jsonl"

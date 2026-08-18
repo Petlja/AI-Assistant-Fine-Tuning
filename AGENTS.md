@@ -82,8 +82,22 @@ The pipeline consists of **7 CLI commands** (via `astft` entrypoint, defined in 
     }
     ```
   - `evaluation.txt` — Statistics (scores, splits, etc.)
-- **Options:** `--model`, `--threshold` (default: 7, range 1-10), `--sft-output`, `--dpo-output`, `--append/--overwrite`
+- **Options:** `--model`, `--threshold` (default: 70, range 1-100), `--sft-output`, `--dpo-output`, `--append/--overwrite`
 - **Key File:** [gen_td.py](ai_assistant_fine_tuning/gen_td.py)
+
+> ⚠️ **The score scale changed from 1-10 to 1-100 (2026-08-18).** The threshold
+> default moved 7 → 70 with it. Scores produced before that change are on the
+> old scale and are **not comparable** to new ones — do not mix an old
+> `scores`/manifest file with new output, and re-run `gen-td` rather than
+> reusing old evaluations. The 1-100 anchors are five bands (see
+> `EVALUATION_PROMPT` in [core.py](ai_assistant_fine_tuning/core.py)), ported
+> from the judge rubric in the AI-Assistant-LLM-Compare repo so the pointwise
+> scorer and the pairwise judge grade on the same scale.
+>
+> Note that 70 sits at the top of the "Adequate" band, so the current default
+> routes "adequate or better" to SFT. This is a straight translation of the old
+> 7/10 and is **not yet calibrated** — it gets re-anchored from the real score
+> distribution once judge/human alignment work lands (PLAN.md Phase 7.2).
 
 ---
 
@@ -107,7 +121,7 @@ When processing **large datasets** (100k+ questions), use the Batch API for cost
       "model": "gpt-4o-mini",
       "input_file": "questions.batch.input.jsonl",
       "created_at": "...",
-      "threshold": 7,
+      "threshold": 70,
       "status": "prepared"
     }
     ```
@@ -235,7 +249,7 @@ astft gen-questions --input-dir ./dataset/etit1_prog --output-dir finetunedata/q
 astft gen-answers --questions finetunedata/questions_batch/questions.jsonl --output answers.jsonl --model Qwen/Qwen3-14B
 
 # Step 3: Evaluate and generate SFT/DPO training data
-astft gen-td --answers answers.jsonl --sft-output training_data.jsonl --dpo-output training_data_dpo.jsonl --threshold 7
+astft gen-td --answers answers.jsonl --sft-output training_data.jsonl --dpo-output training_data_dpo.jsonl --threshold 70
 
 # Fine-tune on generated data
 astft sft-finetune --training-data training_data.jsonl
@@ -284,7 +298,7 @@ astft fetch-batch --manifest finetunedata/evaluate_batch/training_data.batch.man
 
 ### Configuration
 - Default model: `gpt-4o-mini` (teacher), `Qwen/Qwen3-14B` (local answering)
-- Evaluation threshold: 1–10 (default: 7), lower scores go to DPO
+- Evaluation threshold: 1–100 (default: 70), lower scores go to DPO
 - Batch manifest schema version: 1.0 (for tracking batch state)
 
 ### Virtual Environment Setup

@@ -97,13 +97,13 @@ Options:
 - `--sft-output FILE` (default: `training_data.jsonl`)
 - `--dpo-output FILE` (default: `training_data_dpo.jsonl`)
 - `--model, -m TEXT` (default: `gpt-5.4-mini`)
-- `--threshold INT` (default: `7`, range 1-10)
+- `--threshold INT` (default: `70`, range 1-100)
 - `--append / --overwrite` (default: overwrite)
 
 Example:
 
 ```bash
-astft gen-td --answers answers.jsonl --threshold 7 --model gpt-4o-mini
+astft gen-td --answers answers.jsonl --threshold 70 --model gpt-4o-mini
 ```
 
 generation (Step 1) or evaluation (Step 3).
@@ -123,7 +123,7 @@ Options:
 - `--answers FILE` (for task=evaluate, default: `answers.jsonl`)
 - `--output-dir, -o DIRECTORY` (default depends on task)
 - `--model, -m TEXT` (default: `gpt-5.4-mini`)
-- `--threshold INT` (default: `7`, stored in manifest for evaluate task)
+- `--threshold INT` (default: `70`, stored in manifest for evaluate task)
 - `--batch-input FILE` (optional batch input JSONL path)
 - `--manifest FILE` (optional batch manifest path)
 
@@ -261,7 +261,7 @@ astft gen-questions --input-dir ./dataset/etit1_prog --output-dir finetunedata/q
 astft gen-answers --questions finetunedata/questions_batch/questions.jsonl --model Qwen/Qwen3-14B --output finetunedata/answers/answers.jsonl
 
 # Step 3: Generate training data — evaluate & route (teacher model)
-astft gen-td --answers finetunedata/answers/answers.jsonl --threshold 7 --model gpt-4o-mini
+astft gen-td --answers finetunedata/answers/answers.jsonl --threshold 70 --model gpt-4o-mini
 ```
 
 
