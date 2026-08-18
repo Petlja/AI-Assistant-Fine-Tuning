@@ -44,12 +44,6 @@ logger = logging.getLogger(__name__)
     help="Output JSONL file for DPO training data (bad answers).",
 )
 @click.option(
-    "--scores-output",
-    type=click.Path(dir_okay=False, path_type=Path),
-    required=False,
-    help="Output JSONL file with evaluation scores for each question (optional).",
-)
-@click.option(
     "--model",
     "-m",
     default=DEFAULT_MODEL,
@@ -73,7 +67,6 @@ def gen_td(
     answers: Path,
     sft_output: Path,
     dpo_output: Path,
-    scores_output: Path | None,
     model: str,
     threshold: int,
     append: bool,
@@ -100,13 +93,10 @@ def gen_td(
     sft_records: list[dict] = []
     dpo_records: list[dict] = []
     readable_items: list[dict] = []
-    score_records: list[dict] = []
 
     if not append:
         sft_output.write_text("", encoding="utf-8")
         dpo_output.write_text("", encoding="utf-8")
-        if scores_output:
-            scores_output.write_text("", encoding="utf-8")
 
     for i, rec in enumerate(answer_records, 1):
         source = rec.get("source", "unknown")
@@ -141,18 +131,6 @@ def gen_td(
                 "improved_answer": result.improved_answer,
                 "routed_to": routed_to,
             })
-            
-            # Store score record for sample-eval
-            score_records.append({
-                "source": source,
-                "question": question,
-                "score": result.score,
-                "routed_to": routed_to,
-            })
-            
-            if scores_output:
-                write_jsonl([score_records[-1]], scores_output, append=True)
-                
         except Exception as exc:
             click.echo(f"error: {exc}")
             logger.warning("Failed to evaluate Q from %s: %s", source, exc)
@@ -166,5 +144,3 @@ def gen_td(
 
     click.echo(f"\nDone. SFT: {len(sft_records)} records -> {sft_output}")
     click.echo(f"      DPO: {len(dpo_records)} records -> {dpo_output}")
-    if scores_output:
-        click.echo(f"      Scores: {len(score_records)} records -> {scores_output}")
