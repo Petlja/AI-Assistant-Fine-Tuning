@@ -63,54 +63,137 @@ EVALUATION_BATCH_SYSTEM_MESSAGE = (
 # Prompt
 # ---------------------------------------------------------------------------
 
+# The rubric the scorer runs, and the only one. It replaced an earlier prompt
+# that described the production plumbing — the LMS, the RAG retrieval, the
+# chunking — none of which the scorer can see or act on, and whose scores
+# clumped hard: 42% of them were the single value 78, and a scorer that returns
+# one number for everything cannot route anything, whatever the threshold.
+#
+# Three things this one does differently:
+#
+# 1. It describes only what the scorer actually has in front of it — the
+#    material, the question, and the answer.
+# 2. Its rules are the ones a real annotator applied, taken from written
+#    feedback on two annotation sessions: the 19-case Qwen3-14B t1-vs-t2 pair
+#    (2026-09-02) and the Qwen-vs-Ministral pair (2026-09-10).
+# 3. It asks for the score in two steps, band then position, which is what
+#    broke the clumping.
+#
+# Two of the rules came out of the second session and are worth calling out,
+# because each corrects a failure that was measured rather than guessed:
+#
+# - "It does the work the request asks for" — the earlier draft could not tell
+#   "grounded in the material" from "copying the material". Asked for homework
+#   after two named worked examples, the answer that reproduced both of them
+#   scored 78 and the one that wrote three new exercises scored 62.
+# - The length counterweight inside "It brings in no more than the question
+#   needs" — the other rules all leaned the same way on length, and the scorer
+#   duly read them as "shorter is better": it preferred the shorter answer in
+#   8 of 9 decided cases, against a human split of 3 of 7.
+#
+# The improved answer is asked for as what a stronger assistant would write, not
+# as "an answer that would score 90-100". Scoring your own target invites the
+# model to write to the rubric instead of to the teacher.
 EVALUATION_PROMPT = """\
-You are evaluating an answer produced by an AI teaching assistant deployed on \
-the LMS platform.  In production, this assistant receives course/lesson \
-summaries and RAG-retrieved content chunks as context, then answers teacher \
-questions via chat in Markdown format.
+A teacher is preparing a lesson and asked an AI assistant a question about the \
+material they teach.  Below you will find the course material the assistant was \
+working from, the teacher's question, and the answer the assistant gave.  Your \
+job is to judge that answer.
 
-The assistant should give accurate, concise, and practically useful answers \
-grounded in the course material.  If the assistant is unsure, it should say so \
-rather than guessing.  Answers must be in the same language as the question.
-
-Context (system message that was given to the answering assistant):
+Course material the assistant was working from:
 {system_message}
 
-Question the teacher asked:
+The teacher's question:
 {question}
 
-Assistant's answer:
+The answer to judge:
 {answer}
 
-Score the answer on a scale from 1 to 100.  Use the full range — a generic \
-paragraph and a detailed, well-structured answer with examples should NOT get \
-similar scores.
+What makes an answer good:
 
-Score anchors:
-- 1-25: Poor — incorrect, off-topic, could mislead a teacher or student, or \
-ignores the course context entirely.
-- 26-50: Below average — partially correct but with significant gaps, \
-inaccuracies, or generic advice that is not grounded in this course's subject.
-- 51-70: Adequate — addresses the question reasonably but lacks depth, \
-concrete examples, or polish; a teacher could use it but would have to fill in gaps.
-- 71-85: Good — accurate, relevant and well-structured, directly usable for \
-lesson preparation, with only minor issues.
-- 86-100: Excellent — accurate, comprehensive, cleanly formatted, precisely \
-scoped to the course subject, and immediately useful for lesson preparation.
+**It does the work the request asks for.**  Work the assistant hands back \
+instead of doing does not count, however well presented.  Material lifted \
+from the lesson above is the clearest case: when the teacher asks for \
+something new — fresh exercises, a test, a plan, an explanation of their \
+own — content copied from the material is the assistant handing the \
+teacher back their own input.  Read what the request actually asks to be \
+produced, note anything it rules out, and judge whether the answer \
+produced it.  An answer that leaves the real work to the teacher has \
+failed the request however sound it is.
 
-Key evaluation criteria:
-- Is the answer faithful to the specific course subject? (e.g. C-specific if \
-the course is about C, not generic programming advice)
-- Would a teacher find this answer practically useful for lesson prep?
-- Is it concise without sacrificing important details?
-- Is it formatted cleanly in Markdown?
-- Does it admit uncertainty rather than hallucinating when appropriate?
-- For pedagogical questions: does it offer concrete strategies a teacher can \
-actually use in a classroom?
+**It stays with the course material.**  The material above is the source of \
+truth.  Your own knowledge of the subject — teaching practice, introductory and \
+advanced computer science — is useful and welcome where the material is silent, \
+but it must never contradict or quietly replace what the material says.  An \
+answer that follows the conventions of the lesson is worth more than one that is \
+merely correct in general: if the lesson calls module functions directly, an \
+answer that creates an object first is a worse fit even though both run.
 
-Then provide an **improved_answer** that would score 90-100.  The improved answer \
-must be written as if the AI assistant is directly responding to the teacher — \
-in the same language as the question, formatted in Markdown.
+**It answers the question that was asked.**  A teacher asked something specific. \
+An answer that wanders into the subject at large — restating learning \
+objectives, explaining how the task relates to the lesson, giving background \
+nobody asked for — is padding, however true it is.  Judge whether the question \
+was answered, then whether anything else earned its place.
+
+**It brings in no more than the question needs.**  Reaching for extra concepts, \
+options and refinements looks thorough and usually is not: it puts work on the \
+teacher to find the part that answers them.  Where two approaches would both \
+work, the one that stays inside what the lesson already covers is better.  \
+Length itself is not the test, in either direction: a long answer whose \
+parts all earn their place is better than a short one the teacher would \
+have to finish, and brevity is no virtue in an answer that left the work \
+undone.
+
+**It is correct, and precise about what it claims.**  Check the substance, not \
+the confidence.  Examples and exercises must actually hold up — an exercise that \
+depends on something never defined is not usable.  Watch the difference between \
+what a standard permits and what tools happen to allow; between what a piece of \
+notation means and what it looks like it means.  Where an answer lists \
+categories, the rest of it should cover the categories it listed.
+
+**Everything it adds must earn its place.**  Explanation that tells the teacher \
+something the code or the answer does not already say is valuable.  Explanation \
+that restates the comments in its own example, or closes with a summary that \
+merely repeats what was said, adds length and nothing else.
+
+**A teacher could use it as it stands.**  Practical shape matters: a lesson plan \
+should look like a lesson plan, with a plausible running time and the parts a \
+teacher expects; notebook code should look like notebook cells.  Ask whether \
+this could be taken into a classroom, not just whether it is true.
+
+**It is written in the teacher's language and script.**  Match the question — \
+including Cyrillic or Latin script — and write naturally in that language.  \
+Answering in English because the subject matter is English is a real failure, \
+not a stylistic quibble.  So are words borrowed from a neighbouring language \
+that a native speaker would not use.
+
+**It is clean Markdown, and honest about uncertainty.**  Saying plainly that \
+something is unclear beats a confident guess.
+
+Now score the answer from 1 to 100, in two steps.
+
+First choose the band it belongs in:
+- 86-100: Correct, grounded in the material, exactly on target, and usable as it \
+stands.  Nothing in it is wasted.
+- 71-85: Solid and usable, with small problems — some padding, a minor \
+imprecision, a detail the teacher would have to fill in.
+- 51-70: Answers the question, but thinly or without focus — it drifts, restates \
+itself, reaches past what was needed, or is generic where the material is \
+specific.
+- 26-50: Real problems — wrong in places, ignores the conventions of the \
+material, written in the wrong language, or offering examples that do not hold \
+up.
+- 1-25: Wrong, off topic, or liable to mislead the teacher or their students.
+
+Then place it inside that band by how fully it satisfies the points above — the \
+top of a band is an answer with one small blemish, the bottom is one that barely \
+clears the band below.  Do not settle on a comfortable default number: answers \
+differ, and the score should say where.
+
+Finally, write the answer a stronger assistant would have given to this same \
+question, from this same material, as **improved_answer**.  Write it as that \
+assistant speaking directly to the teacher — in the language and script of the \
+question, in Markdown.  Write the answer itself, not a critique of the one above.
 """
 
 # ---------------------------------------------------------------------------
@@ -133,9 +216,10 @@ class EvaluationResult(BaseModel):
 class ScorerConfig(BaseModel):
     """One scorer variant. Everything that can be tuned during calibration.
 
-    Variants are compared against a frozen set of human pairwise verdicts; see
-    PLAN.md Phase 6. Change one field per variant so a difference in agreement
-    can be attributed to something.
+    The defaults ARE the shipped scorer, so a bare `ScorerConfig(name=...)` is
+    the production behaviour. Variants are compared against a frozen set of
+    human pairwise verdicts; see PLAN.md Phase 6. Change one field per variant
+    so a difference in agreement can be attributed to something.
     """
 
     name: str
@@ -161,15 +245,20 @@ class Score(BaseModel):
     raw: str
 
 
-# The registry calibration runs select from. "v1-baseline" is the behaviour
-# `gen-td` has always had (at the 1-100 scale). Add variants, never edit one in
-# place — an edited variant silently invalidates every result recorded against
-# its name.
+# The registry calibration runs select from. It holds one entry: the rubric
+# above, which won the calibration against its two predecessors (recorded under
+# the names "v1-baseline" and "v2-natural", both removed once it was settled).
+#
+# The registry stays because it is the seam `plcmp calibrate --scorer` selects
+# through, and because the next round of tuning wants the same discipline as the
+# last one: add a variant, change ONE field in it, and never edit a variant in
+# place — an edited variant silently invalidates every result already recorded
+# against its name.
 SCORER_VARIANTS: dict[str, ScorerConfig] = {
-    "v1-baseline": ScorerConfig(name="v1-baseline"),
+    "teacher-rubric": ScorerConfig(name="teacher-rubric"),
 }
 
-DEFAULT_SCORER = "v1-baseline"
+DEFAULT_SCORER = "teacher-rubric"
 
 
 def get_scorer(name: str = DEFAULT_SCORER, *, model: str | None = None) -> ScorerConfig:

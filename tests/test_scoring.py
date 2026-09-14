@@ -87,7 +87,7 @@ def test_score_answer_returns_score_with_provenance():
     assert result.score == 88
     assert result.scale_max == 100
     assert result.improved_answer == "better answer"
-    assert result.scorer == "v1-baseline"
+    assert result.scorer == "teacher-rubric"
 
 
 def test_score_answer_sends_one_answer_and_the_config_settings():
@@ -110,9 +110,16 @@ def test_score_answer_sends_one_answer_and_the_config_settings():
 def test_prompt_asks_for_the_full_1_100_range():
     # The scale and its anchors are what the whole calibration rests on.
     assert "1 to 100" in EVALUATION_PROMPT
-    assert "86-100" in EVALUATION_PROMPT
-    assert "90-100" in EVALUATION_PROMPT
-    assert "Use the full range" in EVALUATION_PROMPT
+    for band in ("86-100", "71-85", "51-70", "26-50", "1-25"):
+        assert band in EVALUATION_PROMPT
+
+
+def test_prompt_asks_for_the_score_in_two_steps():
+    # Band first, then position inside it. Asking for a bare number is what
+    # made the previous rubric's scores clump on a single value.
+    assert "in two steps" in EVALUATION_PROMPT
+    assert "First choose the band" in EVALUATION_PROMPT
+    assert "Do not settle on a comfortable default number" in EVALUATION_PROMPT
 
 
 def test_improved_answer_is_always_requested():
@@ -185,22 +192,22 @@ def test_transform_evaluate_batch_rejects_bad_payloads(payload):
 # --------------------------------------------------------------------------
 
 
-def test_baseline_variant_matches_the_shipped_defaults():
-    config = get_scorer("v1-baseline")
+def test_the_shipped_variant_matches_the_shipped_defaults():
+    config = get_scorer("teacher-rubric")
     assert config.scale_max == DEFAULT_SCALE_MAX
     assert config.prompt_template == EVALUATION_PROMPT
 
 
 def test_model_override_does_not_mutate_the_registry():
-    overridden = get_scorer("v1-baseline", model="gpt-4o")
+    overridden = get_scorer("teacher-rubric", model="gpt-4o")
     assert overridden.model == "gpt-4o"
     # Calibration results are recorded against a variant name; if an override
     # leaked into the registry those records would become meaningless.
-    assert SCORER_VARIANTS["v1-baseline"].model == "gpt-5.4-mini"
+    assert SCORER_VARIANTS["teacher-rubric"].model == "gpt-5.4-mini"
 
 
 def test_unknown_variant_names_the_known_ones():
-    with pytest.raises(ValueError, match="v1-baseline"):
+    with pytest.raises(ValueError, match="teacher-rubric"):
         get_scorer("does-not-exist")
 
 
