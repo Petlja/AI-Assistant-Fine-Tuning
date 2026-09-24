@@ -86,3 +86,4 @@ check_dpo_tokenization.py
 /eval-* 
 # Tinkering scratch scripts
 scratch/
+/human_eval
