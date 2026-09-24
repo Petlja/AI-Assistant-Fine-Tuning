@@ -81,5 +81,8 @@ training_data.*
 /dataset
 /test
 /finetunedata
+/finetune-data-sept
 check_dpo_tokenization.py
 /eval-* 
+# Tinkering scratch scripts
+scratch/

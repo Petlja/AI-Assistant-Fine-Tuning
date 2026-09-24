@@ -8,11 +8,11 @@ from threading import Lock
 import click
 from openai import OpenAI
 
-from ai_assistant_fine_tuning.batch_util import read_jsonl, write_jsonl
+from ai_assistant_fine_tuning.io_jsonl import read_jsonl, write_jsonl
 from ai_assistant_fine_tuning.core import (
     DEFAULT_ANSWERS_OUTPUT_FILE,
     DEFAULT_LOCAL_MODEL,
-    DEFAULT_QUESTIONS_OUTPUT_FILE,
+    DEFAULT_QUESTIONS_DERIVED_FILE,
     DEFAULT_VLLM_API_KEY,
     DEFAULT_VLLM_BASE_URL,
     write_readable_answers,
@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 @click.option(
     "--questions",
     type=click.Path(exists=True, dir_okay=False, path_type=Path),
-    default=DEFAULT_QUESTIONS_OUTPUT_FILE,
+    default=DEFAULT_QUESTIONS_DERIVED_FILE,
     show_default=True,
     help="Input JSONL file with generated questions (from gen-questions).",
 )
@@ -129,7 +129,10 @@ def gen_answers(
             "source": source,
             "system_message": system_message,
             "question": q,
-            "answer": completion.choices[0].message.content or "",
+            # Stripped: a server running --reasoning-parser leaves the blank
+            # lines where the thinking block was, and this string ships into
+            # the SFT/DPO records verbatim.
+            "answer": (completion.choices[0].message.content or "").strip(),
         }
 
     with ThreadPoolExecutor(max_workers=concurrency) as pool:
