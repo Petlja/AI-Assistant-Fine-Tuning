@@ -87,3 +87,6 @@ check_dpo_tokenization.py
 # Tinkering scratch scripts
 scratch/
 /human_eval
+# Private notes: failures, early attempts, infrastructure. Never commit.
+/docs/
+CLAUDE.local.md

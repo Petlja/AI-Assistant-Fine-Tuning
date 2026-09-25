@@ -234,9 +234,11 @@ Options:
 `messages` is a language-modelling dataset: the loss covers the whole sequence,
 lesson material included. The material is handed to the model at inference and
 never generated, and it is roughly three quarters of the tokens — so `messages`
-spends most of the gradient on a task the model never performs. Measured: a
-`messages` run lost 4.4 points of belebele-sr against the base model, where the
-equivalent `prompt-completion` run lost 0.8.
+spends most of the gradient on a task the model never performs. Measured on
+belebele-sr against the base model: `t7-sft` (whole-sequence loss, April data)
+lost 4.4 points, `derived-sft-02` (`prompt-completion`, September data) lost
+0.8. The data differs too, so this is suggestive rather than controlled;
+`derived-sft-01`, the September `messages` run, was never evaluated.
 
 **`--max-tokens` drops rows, it does not truncate them.** Truncation removes the
 end of the sequence, which is the answer, and trains the model to stop mid
@@ -269,8 +271,9 @@ astft make-sft --written finetunedata/td/written_derived.jsonl \
     --rows repair --shape messages
 ```
 
-The masked run lost **0.8 pp** of belebele-sr against the base model; the
-unmasked one lost **4.4 pp**.
+On belebele-sr, the masked `derived-sft-02` lost **0.8 pp** against the base
+model and the unmasked April `t7-sft` lost **4.4 pp**. `derived-sft-01` was
+never evaluated, so there is no same-data comparison yet.
 
 ### 5) make-dpo
 

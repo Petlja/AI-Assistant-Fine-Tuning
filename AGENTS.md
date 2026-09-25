@@ -1,5 +1,6 @@
 # AI Assistant Fine-Tuning — Agent Instructions
 
+
 This document helps AI coding agents understand the command flow, data structures, and processing patterns in this fine-tuning pipeline.
 
 ## Project Overview
@@ -186,10 +187,13 @@ are re-run per training run, in whatever shape it needs.
 > `completion_only_loss` to True — loss on the answer tokens only. `messages` is
 > a language-modelling dataset: loss over the whole sequence, lesson material
 > included. The material is handed to the model at inference and never generated,
-> and it is ~77% of the tokens (mean 472 answer tokens of 2029). Measured: a
-> `messages` run lost **4.4 points** of belebele-sr against base, where the
-> equivalent `prompt-completion` run lost **0.8**. The two shapes render
-> byte-identically once concatenated; only the scored tokens differ.
+> and it is ~77% of the tokens (mean 472 answer tokens of 2029). Measured on
+> belebele-sr against base: `t7-sft` (whole-sequence loss, April data) lost
+> **4.4 points**; `derived-sft-02` (`prompt-completion`, September data) lost
+> **0.8**. That comparison changes the data as well as the loss, so it is
+> suggestive, not controlled — `derived-sft-01`, the September `messages` run,
+> was never evaluated. The two shapes render byte-identically once
+> concatenated; only the scored tokens differ.
 >
 > `assistant_only_loss=True` is **not** an alternative — Qwen3's chat template
 > has no `{% generation %}` marker, so the assistant mask comes back all zeros.
