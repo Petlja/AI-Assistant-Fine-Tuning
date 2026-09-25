@@ -19,6 +19,12 @@ OUTPUT_SUBDIR="${OUTPUT_SUBDIR:-ft-sft}"
 TASKS="${TASKS:-arc_challenge,hellaswag,mmlu}"
 NUM_FEWSHOT="${NUM_FEWSHOT:-0}"
 
+# CONCURRENT: parallel requests to the server. Does not affect scores.
+# MAX_LENGTH: prompt budget. lm-eval's local-completions default is 2048, which
+# silently left-truncates long prompts (mmlu-prox) and changes the score.
+CONCURRENT="${CONCURRENT:-16}"
+MAX_LENGTH="${MAX_LENGTH:-8192}"
+
 # LIMIT controls dataset truncation.
 # - unset   -> default smoke test size (500)
 # - empty   -> full dataset
@@ -50,7 +56,7 @@ echo "    Model: $MODEL_NAME | Tasks: $TASKS | Few-shot: $NUM_FEWSHOT | Limit: $
 
 uv run lm_eval run \
     --model local-completions \
-    --model_args "model=${MODEL_NAME},base_url=http://localhost:${PORT}/v1/completions,tokenizer=${ADAPTER_PATH},num_concurrent=1,max_retries=3" \
+    --model_args "model=${MODEL_NAME},base_url=http://localhost:${PORT}/v1/completions,tokenizer=${ADAPTER_PATH},num_concurrent=${CONCURRENT},max_retries=3,max_length=${MAX_LENGTH}" \
     --tasks "$TASKS" \
     --num_fewshot "$NUM_FEWSHOT" \
     --gen_kwargs temperature=0,top_p=1 \
