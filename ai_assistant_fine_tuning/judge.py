@@ -52,7 +52,9 @@ from ai_assistant_fine_tuning.io_jsonl import read_jsonl, write_jsonl
 from ai_assistant_fine_tuning.judging import (
     DEFAULT_JUDGE_MODEL,
     DEFAULT_REWRITE_SHARE,
+    JUDGE_NAME,
     JudgeConfig,
+    load_prompts,
     score_answer,
     split_by_rank,
     write_answer,
@@ -110,6 +112,13 @@ def record_key(record: dict) -> tuple[str, str]:
     help="Teacher model used for both passes.",
 )
 @click.option(
+    "--prompts",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=None,
+    help="TOML file with a judge's own name and its three prompts, replacing "
+         "the built-in ones. For a batch that needs a different rubric.",
+)
+@click.option(
     "--write",
     "write_mode",
     type=click.Choice(["repair", "rewrite", "split"]),
@@ -160,6 +169,7 @@ def judge(
     scores_output: Path,
     written_output: Path,
     model: str,
+    prompts: Path | None,
     write_mode: str,
     rewrite_share: float,
     concurrency: int,
@@ -181,6 +191,11 @@ def judge(
     if limit:
         records = records[:limit]
 
+    try:
+        config = JudgeConfig(model=model, **(load_prompts(prompts) if prompts else {}))
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+
     scored_before: dict[tuple[str, str], dict] = {}
     written_before: dict[tuple[tuple[str, str], str], dict] = {}
     if resume:
@@ -193,13 +208,25 @@ def judge(
             written_before = {
                 (record_key(r), r["mode"]): r for r in read_jsonl(written_output)
             }
+        # Scores from two rubrics are not on one scale, and the split ranks
+        # them together.  Rows from before the `judge` field existed were all
+        # scored by the built-in judge.
+        others = {
+            r.get("judge", JUDGE_NAME)
+            for r in (*scored_before.values(), *written_before.values())
+        } - {config.name}
+        if others:
+            raise click.ClickException(
+                f"{scores_output} / {written_output} hold rows judged by "
+                f"{', '.join(sorted(others))}, not {config.name}. Write to new "
+                "output files, or pass --no-resume to start them over."
+            )
         if scored_before or written_before:
             click.echo(
                 f"Resuming: {len(scored_before)} scored, "
                 f"{len(written_before)} written"
             )
 
-    config = JudgeConfig(model=model)
     client = build_teacher_client()
     click.echo(f"{len(records)} answer(s), judge {config.name} on {config.model}")
     if write_mode == "split":
@@ -232,6 +259,7 @@ def judge(
             **rec,
             "substance_score": result.substance_score,
             "language_score": result.language_score,
+            "judge": result.scorer,
         }
 
     if todo:

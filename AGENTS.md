@@ -137,12 +137,13 @@ are re-run per training run, in whatever shape it needs.
       "improved_answer": "what the teacher said",
       "mode": "repair|rewrite",
       "substance_score": 82,
-      "language_score": 91
+      "language_score": 91,
+      "judge": "two-pass-rank"
     }
     ```
 - **Options:** `--write repair|rewrite|split`, `--rewrite-share` (default 0.25,
-  `split` only), `--model`, `--concurrency` (default 4), `--resume/--no-resume`,
-  `--scores-only`, `--limit`
+  `split` only), `--model`, `--prompts`, `--concurrency` (default 4),
+  `--resume/--no-resume`, `--scores-only`, `--limit`
 - **Key Files:** [judge.py](ai_assistant_fine_tuning/judge.py) (command),
   [judging.py](ai_assistant_fine_tuning/judging.py) (prompts, scorer, record builders)
 
@@ -159,6 +160,23 @@ are re-run per training run, in whatever shape it needs.
 > prompt and 43-95 under the next. `--rewrite-share` is applied *after* scoring,
 > so a batch that has been paid for can be re-split at a different share without
 > being re-scored.
+>
+> **`--prompts FILE` swaps in a different rubric** without editing the
+> built-in prompts, which would change what every result filed under
+> `JUDGE_NAME` means. The file is TOML: `name`, `score_prompt`, `repair_prompt`,
+> `rewrite_prompt`, and optionally `system_judge` / `system_write`. Use `'''`
+> literal strings. The name must differ from the built-in `two-pass-rank`.
+> Placeholders are checked before anything is paid for: score and repair take
+> exactly `{system_message}`, `{question}`, `{answer}`, and rewrite exactly
+> `{system_message}`, `{question}`, since it never sees the attempt. Write a
+> literal brace as `{{` or `}}`. The score prompt must still
+> ask for `substance_score` and `language_score`, since that response format is
+> fixed.
+>
+> **Every scored row records its `judge`.** `--resume` refuses output files
+> holding rows from a different judge: two rubrics' scores are not on one
+> scale, and the split would rank them together. Rows from before the field
+> existed count as `two-pass-rank`.
 >
 > **Scores are 1-100** (`substance_score` and `language_score`, kept apart).
 > Anything produced before 2026-08-18 is on the old 1-10 scale and is **not
@@ -296,7 +314,8 @@ Run **one or the other**, not one chained into the other. See the warning below.
 ```json
 {
   "substance_score": 82,
-  "language_score": 91
+  "language_score": 91,
+  "judge": "str — the name of the judge that scored it"
 }
 ```
 
@@ -310,7 +329,8 @@ Run **one or the other**, not one chained into the other. See the warning below.
   "improved_answer": "str — what the teacher said",
   "mode": "repair|rewrite",
   "substance_score": 82,
-  "language_score": 91
+  "language_score": 91,
+  "judge": "str — the name of the judge that scored it"
 }
 ```
 Self-contained on purpose: this row alone becomes an SFT row or a DPO pair, with

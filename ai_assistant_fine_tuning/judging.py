@@ -35,7 +35,9 @@ from __future__ import annotations
 
 import logging
 import random
+import string
 import time
+from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -245,6 +247,69 @@ class JudgeConfig(BaseModel):
     score_prompt: str = SCORE_PROMPT
     repair_prompt: str = REPAIR_PROMPT
     rewrite_prompt: str = REWRITE_PROMPT
+
+
+# A judge with a different rubric arrives as a file, never as an edit to the
+# prompts above: editing them in place would change what every result filed
+# under JUDGE_NAME means.  Each prompt must take exactly the placeholders its
+# pass fills in -- and the rewrite prompt no {answer}, since it never sees the
+# attempt.
+_PROMPT_PLACEHOLDERS = {
+    "score_prompt": {"system_message", "question", "answer"},
+    "repair_prompt": {"system_message", "question", "answer"},
+    "rewrite_prompt": {"system_message", "question"},
+}
+_OPTIONAL_PROMPT_FIELDS = {"system_judge", "system_write"}
+
+
+def load_prompts(path: Path) -> dict[str, str]:
+    """Read a judge's name and prompts from a TOML file, for `JudgeConfig(**...)`.
+
+    Required: `name`, `score_prompt`, `repair_prompt`, `rewrite_prompt`.
+    Optional: `system_judge`, `system_write`.  Everything is checked here, before
+    a single call is paid for.  The score prompt still has to ask for
+    `substance_score` and `language_score`: that response format is fixed.
+    """
+    import tomllib  # stdlib from 3.11; only this function needs it
+
+    with open(path, "rb") as handle:
+        data = tomllib.load(handle)
+
+    required = {"name", *_PROMPT_PLACEHOLDERS}
+    missing = required - set(data)
+    unknown = set(data) - required - _OPTIONAL_PROMPT_FIELDS
+    if missing or unknown:
+        raise ValueError(
+            f"{path}: missing {sorted(missing) or 'nothing'}, "
+            f"unknown {sorted(unknown) or 'nothing'}"
+        )
+    not_text = sorted(
+        k for k, v in data.items() if not isinstance(v, str) or not v.strip()
+    )
+    if not_text:
+        raise ValueError(f"{path}: {', '.join(not_text)} must be non-empty text")
+    if data["name"] == JUDGE_NAME:
+        raise ValueError(
+            f"{path}: name {JUDGE_NAME!r} belongs to the built-in judge; give "
+            "this one its own, so its scores are never filed as the built-in's"
+        )
+    for field, wanted in _PROMPT_PLACEHOLDERS.items():
+        try:
+            found = {
+                name
+                for _, name, _, _ in string.Formatter().parse(data[field])
+                if name is not None
+            }
+        except ValueError as exc:
+            raise ValueError(
+                f"{path}: {field}: {exc} (write a literal brace as {{{{ or }}}})"
+            ) from exc
+        if found != wanted:
+            raise ValueError(
+                f"{path}: {field} must use exactly the placeholders "
+                f"{sorted(wanted)}, found {sorted(found)}"
+            )
+    return data
 
 
 class ScoreResult(BaseModel):
