@@ -30,6 +30,14 @@ it is roughly three quarters of the tokens, so `messages` spends most of the
 gradient on a task the model never performs.  Measured: a run under `messages`
 lost 4.4 points of belebele-sr against the base model, where the equivalent
 `prompt-completion` run lost 0.8.
+
+`--no-think-loss` is for hybrid-reasoning models such as Qwen3.  The targets
+carry no reasoning, so the chat template renders each one after an empty
+`<think>\\n\\n</think>\\n\\n` block, and by default TRL counts that block as part
+of the completion: the model is trained to skip thinking.  The flag writes
+`chat_template_kwargs: {"enable_thinking": false}` on every row, which TRL
+passes to the template, so the empty block moves into the prompt and the loss
+covers the answer only (the same effect as ms-swift's `ignore_empty_think`).
 """
 
 from __future__ import annotations
@@ -167,16 +175,29 @@ def _cap_options(func):
     help="prompt-completion trains on the answer only; messages trains on the "
          "whole sequence, lesson material included.",
 )
+@click.option(
+    "--no-think-loss",
+    is_flag=True,
+    help="Render rows with enable_thinking=false, so the empty think block a "
+         "hybrid-reasoning template adds sits in the prompt and gets no loss. "
+         "prompt-completion only.",
+)
 @_cap_options
 def make_sft(
     written: Path,
     output: Path,
     rows: str,
     shape: str,
+    no_think_loss: bool,
     max_tokens: int | None,
     tokenizer_model: str,
 ) -> None:
     """Build an SFT file from a judged file, using the teacher's answer as target."""
+    if no_think_loss and shape == "messages":
+        # In a full conversation the template puts the empty block inside the
+        # final assistant turn whatever enable_thinking says, and `messages`
+        # trains on every token anyway.
+        raise click.UsageError("--no-think-loss needs --shape prompt-completion")
     records = read_jsonl(written)
     click.echo(f"Read {len(records)} judged rows from {written}")
     kept = _select(records, rows, "system_message", "question", "improved_answer")
@@ -195,11 +216,14 @@ def make_sft(
         if shape == "messages":
             built.append({"messages": messages})
         else:
-            built.append({"prompt": messages[:2], "completion": messages[2:]})
+            row = {"prompt": messages[:2], "completion": messages[2:]}
+            if no_think_loss:
+                row["chat_template_kwargs"] = {"enable_thinking": False}
+            built.append(row)
 
     write_jsonl(built, output)
     _report(records, kept, output)
-    click.echo(f"Shape: {shape}")
+    click.echo(f"Shape: {shape}" + (", empty think block in the prompt" if no_think_loss else ""))
 
 
 @click.command("make-dpo")

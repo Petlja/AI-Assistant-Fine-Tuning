@@ -5,8 +5,6 @@ import logging
 import click
 from dotenv import load_dotenv
 
-from ai_assistant_fine_tuning.finetune_dpo import dpo_finetune
-from ai_assistant_fine_tuning.finetune_sft import sft_finetune
 from ai_assistant_fine_tuning.gen_answers import gen_answers
 from ai_assistant_fine_tuning.gen_questions import gen_questions
 from ai_assistant_fine_tuning.judge import judge
@@ -30,9 +28,18 @@ cli.add_command(gen_answers)      # Step 2: the local model answers them
 cli.add_command(judge)            # Step 3: teacher scores, then repairs or rewrites
 cli.add_command(make_sft)         # Build an SFT file from the judged file
 cli.add_command(make_dpo)         # Build DPO pairs from the judged file
-# Training. Run one or the other -- not chained.
-cli.add_command(sft_finetune)
-cli.add_command(dpo_finetune)
+# Training. Run one or the other -- not chained.  Registered only where torch is
+# installed: the data-generation venv has none, and importing the trainers there
+# would break every command above.
+try:
+    from ai_assistant_fine_tuning.finetune_dpo import dpo_finetune
+    from ai_assistant_fine_tuning.finetune_sft import sft_finetune
+except ModuleNotFoundError as exc:
+    if exc.name != "torch":
+        raise
+else:
+    cli.add_command(sft_finetune)
+    cli.add_command(dpo_finetune)
 
 
 if __name__ == "__main__":
