@@ -526,14 +526,28 @@ def as_sft_record(record: dict[str, Any]) -> dict[str, Any]:
     inside an assistant turn is a token the model learns to emit, and the two
     builders disagreeing about it would put the same answer in two shapes
     depending on which training file it landed in.
+
+    A record with a reasoning trace (`gen-answers --keep-reasoning`) puts it in
+    front of the answer as `<think>\\n...\\n</think>\\n\\n`, which the Qwen3 chat
+    template splits back out and renders the same way.  Not as a separate
+    `reasoning_content` key: rows with and without it give the message dicts
+    uneven keys, `datasets` then loads the column as Arrow JSON, and TRL's
+    truncation fails on that type.
     """
+    answer = _norm(record["improved_answer"])
+    if has_trace(record):
+        answer = f"<think>\n{_norm(record['reasoning'])}\n</think>\n\n{answer}"
     return {
         "messages": [
             {"role": "system", "content": _norm(record["system_message"])},
             {"role": "user", "content": _norm(record["question"])},
-            {"role": "assistant", "content": _norm(record["improved_answer"])},
+            {"role": "assistant", "content": answer},
         ]
     }
+
+
+def has_trace(record: dict[str, Any]) -> bool:
+    return bool(str(record.get("reasoning") or "").strip())
 
 
 def as_dpo_record(record: dict[str, Any]) -> dict[str, Any]:

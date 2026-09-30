@@ -1,4 +1,13 @@
-"""Step 2: Answer generated questions using a local vLLM model."""
+"""Step 2: Answer generated questions using a local vLLM model.
+
+`--keep-reasoning` is for a hybrid-reasoning model served with a reasoning
+parser (vLLM `--reasoning-parser qwen3`).  The server then returns the thinking
+in its own `reasoning` field, apart from `content`, and without the flag that
+field is discarded.  With it, each record carries the trace as `reasoning`, and
+`make-sft` trains on it.  An answer cut off at `--max-tokens` is dropped under
+the flag: a trace that runs out of tokens has no answer after it, or only the
+start of one.
+"""
 
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -69,6 +78,22 @@ logger = logging.getLogger(__name__)
     show_default=True,
     help="Number of parallel requests to the local model.",
 )
+@click.option(
+    "--keep-reasoning",
+    is_flag=True,
+    help="Save the server's reasoning trace as `reasoning`, and drop answers "
+         "cut off at --max-tokens. Needs a server with a reasoning parser.",
+)
+@click.option("--temperature", type=float, default=0.5, show_default=True)
+@click.option("--top-p", type=float, default=None, help="Omitted when unset.")
+@click.option(
+    "--top-k", type=int, default=None,
+    help="vLLM sampling extension, sent in extra_body. Omitted when unset.",
+)
+@click.option(
+    "--max-tokens", type=click.IntRange(1), default=8000, show_default=True,
+    help="Completion budget, reasoning included.",
+)
 def gen_answers(
     questions: Path,
     output: Path,
@@ -77,6 +102,11 @@ def gen_answers(
     api_key: str,
     append: bool,
     concurrency: int,
+    keep_reasoning: bool,
+    temperature: float,
+    top_p: float | None,
+    top_k: int | None,
+    max_tokens: int,
 ) -> None:
     """Answer questions using a local vLLM model.
 
@@ -113,6 +143,13 @@ def gen_answers(
     write_lock = Lock()
     total_answers = 0
     total_errors = 0
+    total_cut = 0
+
+    sampling = {"temperature": temperature}
+    if top_p is not None:
+        sampling["top_p"] = top_p
+    if top_k is not None:
+        sampling["extra_body"] = {"top_k": top_k}
 
     def _answer_one(item):
         source, system_message, q = item
@@ -122,24 +159,33 @@ def gen_answers(
                 {"role": "system", "content": system_message},
                 {"role": "user", "content": q},
             ],
-            max_completion_tokens=8000,
-            temperature=0.5,
+            max_completion_tokens=max_tokens,
+            **sampling,
         )
-        return {
+        choice = completion.choices[0]
+        if keep_reasoning and choice.finish_reason == "length":
+            return None
+        record = {
             "source": source,
             "system_message": system_message,
             "question": q,
             # Stripped: a server running --reasoning-parser leaves the blank
             # lines where the thinking block was, and this string ships into
             # the SFT/DPO records verbatim.
-            "answer": (completion.choices[0].message.content or "").strip(),
+            "answer": (choice.message.content or "").strip(),
         }
+        if keep_reasoning:
+            record["reasoning"] = _reasoning(choice.message)
+        return record
 
     with ThreadPoolExecutor(max_workers=concurrency) as pool:
         futures = {pool.submit(_answer_one, item): item for item in work_items}
         for future in as_completed(futures):
             try:
                 record = future.result()
+                if record is None:
+                    total_cut += 1
+                    continue
                 with write_lock:
                     write_jsonl([record], output, append=True)
                     write_readable_answers([record], txt_output, append=True)
@@ -151,4 +197,18 @@ def gen_answers(
                 source = futures[future][0]
                 logger.warning("Failed for %s: %s", source, exc)
 
-    click.echo(f"\nDone. Generated {total_answers} answers, {total_errors} errors -> {output}")
+    cut = f", {total_cut} cut off at {max_tokens} tokens (dropped)" if keep_reasoning else ""
+    click.echo(
+        f"\nDone. Generated {total_answers} answers, {total_errors} errors{cut} -> {output}"
+    )
+
+
+def _reasoning(message) -> str:
+    """The trace a reasoning parser split off the content.
+
+    vLLM names the field `reasoning`; releases before the rename used
+    `reasoning_content`.  Neither is part of the OpenAI schema, so the SDK keeps
+    them among the message's extra fields.
+    """
+    extra = message.model_extra or {}
+    return (extra.get("reasoning") or extra.get("reasoning_content") or "").strip()

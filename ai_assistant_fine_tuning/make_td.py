@@ -38,6 +38,12 @@ of the completion: the model is trained to skip thinking.  The flag writes
 `chat_template_kwargs: {"enable_thinking": false}` on every row, which TRL
 passes to the template, so the empty block moves into the prompt and the loss
 covers the answer only (the same effect as ms-swift's `ignore_empty_think`).
+
+A row whose judged record carries a reasoning trace (`reasoning`) is the
+exception: it is rendered with `enable_thinking: true`, so the prompt ends at
+`<|im_start|>assistant\\n` and the completion is `<think>\\n` trace `\\n</think>`
+followed by the answer.  The trace is trained, not masked: it is what the model
+learns to think from.  A file can mix both kinds of row.
 """
 
 from __future__ import annotations
@@ -53,7 +59,7 @@ from ai_assistant_fine_tuning.core import (
     DEFAULT_SFT_OUTPUT_FILE,
 )
 from ai_assistant_fine_tuning.io_jsonl import read_jsonl, write_jsonl
-from ai_assistant_fine_tuning.judging import as_dpo_record, as_sft_record
+from ai_assistant_fine_tuning.judging import as_dpo_record, as_sft_record, has_trace
 
 DEFAULT_WRITTEN_INPUT_FILE = "written.jsonl"
 
@@ -180,6 +186,7 @@ def _cap_options(func):
     is_flag=True,
     help="Render rows with enable_thinking=false, so the empty think block a "
          "hybrid-reasoning template adds sits in the prompt and gets no loss. "
+         "Rows with a reasoning trace are rendered with thinking on either way. "
          "prompt-completion only.",
 )
 @_cap_options
@@ -217,13 +224,18 @@ def make_sft(
             built.append({"messages": messages})
         else:
             row = {"prompt": messages[:2], "completion": messages[2:]}
-            if no_think_loss:
+            if has_trace(record):
+                row["chat_template_kwargs"] = {"enable_thinking": True}
+            elif no_think_loss:
                 row["chat_template_kwargs"] = {"enable_thinking": False}
             built.append(row)
 
     write_jsonl(built, output)
     _report(records, kept, output)
+    traced = sum(has_trace(r) for r in kept)
     click.echo(f"Shape: {shape}" + (", empty think block in the prompt" if no_think_loss else ""))
+    if traced:
+        click.echo(f"{traced} rows train a reasoning trace (thinking on)")
 
 
 @click.command("make-dpo")
