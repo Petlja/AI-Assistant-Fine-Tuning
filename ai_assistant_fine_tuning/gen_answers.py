@@ -7,6 +7,11 @@ field is discarded.  With it, each record carries the trace as `reasoning`, and
 `make-sft` trains on it.  An answer cut off at `--max-tokens` is dropped under
 the flag: a trace that runs out of tokens has no answer after it, or only the
 start of one.
+
+`--samples N` asks for N answers per question in one request (the server's `n`,
+which shares the prompt's prefill).  Each becomes its own record, numbered by
+`sample`, and a cut-off one is dropped on its own.  The records of one question
+are written together, so a question's samples are never split across a crash.
 """
 
 import logging
@@ -94,6 +99,10 @@ logger = logging.getLogger(__name__)
     "--max-tokens", type=click.IntRange(1), default=8000, show_default=True,
     help="Completion budget, reasoning included.",
 )
+@click.option(
+    "--samples", type=click.IntRange(1, 16), default=1, show_default=True,
+    help="Answers per question, each its own record with a `sample` number.",
+)
 def gen_answers(
     questions: Path,
     output: Path,
@@ -107,6 +116,7 @@ def gen_answers(
     top_p: float | None,
     top_k: int | None,
     max_tokens: int,
+    samples: int,
 ) -> None:
     """Answer questions using a local vLLM model.
 
@@ -151,7 +161,11 @@ def gen_answers(
     if top_k is not None:
         sampling["extra_body"] = {"top_k": top_k}
 
+    if samples > 1:
+        sampling["n"] = samples
+
     def _answer_one(item):
+        """The question's records, and how many samples were cut off."""
         source, system_message, q = item
         completion = client.chat.completions.create(
             model=model,
@@ -162,36 +176,42 @@ def gen_answers(
             max_completion_tokens=max_tokens,
             **sampling,
         )
-        choice = completion.choices[0]
-        if keep_reasoning and choice.finish_reason == "length":
-            return None
-        record = {
-            "source": source,
-            "system_message": system_message,
-            "question": q,
-            # Stripped: a server running --reasoning-parser leaves the blank
-            # lines where the thinking block was, and this string ships into
-            # the SFT/DPO records verbatim.
-            "answer": (choice.message.content or "").strip(),
-        }
-        if keep_reasoning:
-            record["reasoning"] = _reasoning(choice.message)
-        return record
+        records, cut = [], 0
+        for choice in sorted(completion.choices, key=lambda c: c.index):
+            if keep_reasoning and choice.finish_reason == "length":
+                cut += 1
+                continue
+            record = {
+                "source": source,
+                "system_message": system_message,
+                "question": q,
+                # Stripped: a server running --reasoning-parser leaves the blank
+                # lines where the thinking block was, and this string ships into
+                # the SFT/DPO records verbatim.
+                "answer": (choice.message.content or "").strip(),
+            }
+            if keep_reasoning:
+                record["reasoning"] = _reasoning(choice.message)
+            if samples > 1:
+                record["sample"] = choice.index
+            records.append(record)
+        return records, cut
 
     with ThreadPoolExecutor(max_workers=concurrency) as pool:
         futures = {pool.submit(_answer_one, item): item for item in work_items}
         for future in as_completed(futures):
             try:
-                record = future.result()
-                if record is None:
-                    total_cut += 1
+                records, cut = future.result()
+                total_cut += cut
+                if not records:
                     continue
                 with write_lock:
-                    write_jsonl([record], output, append=True)
-                    write_readable_answers([record], txt_output, append=True)
-                    total_answers += 1
-                    if total_answers % 100 == 0:
-                        click.echo(f"  Progress: {total_answers}/{len(work_items)}")
+                    write_jsonl(records, output, append=True)
+                    write_readable_answers(records, txt_output, append=True)
+                    before = total_answers
+                    total_answers += len(records)
+                    if total_answers // 100 > before // 100:
+                        click.echo(f"  Progress: {total_answers}/{len(work_items) * samples}")
             except Exception as exc:
                 total_errors += 1
                 source = futures[future][0]

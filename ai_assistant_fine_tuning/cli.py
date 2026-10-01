@@ -5,6 +5,7 @@ import logging
 import click
 from dotenv import load_dotenv
 
+from ai_assistant_fine_tuning.bestof import judge_bestof
 from ai_assistant_fine_tuning.gen_answers import gen_answers
 from ai_assistant_fine_tuning.gen_questions import gen_questions
 from ai_assistant_fine_tuning.judge import judge
@@ -26,6 +27,7 @@ def cli() -> None:
 cli.add_command(gen_questions)    # Step 1: two passes -> one question per segment
 cli.add_command(gen_answers)      # Step 2: the local model answers them
 cli.add_command(judge)            # Step 3: teacher scores, then repairs or rewrites
+cli.add_command(judge_bestof)     # Step 3 for N samples: best reasoning + answer, polished
 cli.add_command(make_sft)         # Build an SFT file from the judged file
 cli.add_command(make_dpo)         # Build DPO pairs from the judged file
 # Training. Run one or the other -- not chained.  Registered only where torch is
