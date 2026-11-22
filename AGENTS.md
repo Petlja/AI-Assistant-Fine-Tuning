@@ -463,9 +463,11 @@ batch path was for. Do not reintroduce references to them.
 
 ### Virtual Environment Setup
 
-**IMPORTANT:** The virtual environment has special path considerations:
+**IMPORTANT:** Use repository-relative paths in commands and documentation.
+Do not hard-code absolute paths tied to a specific server or user account.
+Run the commands below from the repository root.
 
-1. **Location:** The `.venv` directory is located at the project root, but the actual Python environment may be symlinked to `/datadisk/projects/AI-Assistant-Fine-Tuning/.venv/`
+1. **Location:** The virtual environment is in `.venv/` at the repository root.
 
 2. **Running Commands:**
    - **Always activate the venv first:** `source .venv/bin/activate`
@@ -476,8 +478,6 @@ batch path was for. Do not reintroduce references to them.
 3. **Common Issues:**
    - **Direct pip calls fail:** `.venv/bin/pip` may not exist initially
    - **Solution:** Use `python -m pip` after activating the venv
-   - **Path confusion:** The workspace at `/home/azureuser/projects/` is actually symlinked to `/datadisk/projects/`
-   - Activation handles this automatically, so always use `source .venv/bin/activate`
 
 4. **Dependency Management:**
    - Project uses `pyproject.toml` for dependency specification
@@ -487,7 +487,7 @@ batch path was for. Do not reintroduce references to them.
 
 5. **Example Session:**
    ```bash
-   # Activate venv (handles path symlinks automatically)
+   # Activate venv from the repository root
    source .venv/bin/activate
    
    # Ensure pip is available (if needed)
